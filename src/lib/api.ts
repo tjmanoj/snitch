@@ -1,6 +1,6 @@
 /** Client for the Snitch API. All results come live from the server; nothing is hardcoded here. */
 import type { AnalyzeResponse, AuditResult, Finding, GrievanceRequest, GrievanceResponse } from '../types';
-import { hashBase64, prepareImage } from './image';
+import { hashBase64, isLowBandwidth, prepareImage } from './image';
 import { findCached, saveRecent } from './storage';
 
 export class ApiError extends Error {
@@ -108,8 +108,9 @@ export interface AnalyzeOptions {
 
 /** Analyse a screenshot (File or data URL). Returns a fully-formed AuditResult. */
 export async function analyzeImage(src: File | string, opts: AnalyzeOptions = {}): Promise<AuditResult> {
-  opts.onStatus?.('Preparing screenshot…');
-  const prepared = await prepareImage(src);
+  const lowBw = isLowBandwidth();
+  opts.onStatus?.(lowBw ? 'Compressing for low-bandwidth connection…' : 'Preparing screenshot…');
+  const prepared = await prepareImage(src, lowBw);
   const id = await hashBase64(prepared.base64);
 
   if (!opts.force) {
@@ -119,7 +120,7 @@ export async function analyzeImage(src: File | string, opts: AnalyzeOptions = {}
     }
   }
 
-  opts.onStatus?.('Reading the screen… matching against 13 patterns');
+  opts.onStatus?.(lowBw ? 'Uploading compressed screen to CCPA detector…' : 'Reading the screen… matching against 13 patterns');
   const data = await postJson<AnalyzeResponse>('/api/analyze', { imageBase64: prepared.base64, mimeType: prepared.mimeType }, 60_000);
 
   const findings: Finding[] = (data.findings || [])

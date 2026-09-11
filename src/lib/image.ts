@@ -37,12 +37,27 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-/** Downscale to MAX_EDGE on the long side and re-encode as JPEG (or keep PNG when it has transparency). */
-export async function prepareImage(src: string | File): Promise<PreparedImage> {
+export function isLowBandwidth(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const conn = (navigator as any).connection || (navigator as any).mozConnection || (navigator as any).webkitConnection;
+  if (!conn) return false;
+  if (conn.saveData) return true;
+  const slowTypes = ['slow-2g', '2g', '3g'];
+  if (conn.effectiveType && slowTypes.includes(conn.effectiveType)) return true;
+  return false;
+}
+
+/** Downscale to max edge on the long side and re-encode as JPEG with bandwidth-adaptive compression. */
+export async function prepareImage(src: string | File, forceLowBandwidth?: boolean): Promise<PreparedImage> {
   const dataUrl = typeof src === 'string' ? src : await readFileAsDataUrl(src);
   const img = await loadImage(dataUrl);
 
-  const scale = Math.min(1, MAX_EDGE / Math.max(img.naturalWidth, img.naturalHeight));
+  const lowBandwidth = forceLowBandwidth ?? isLowBandwidth();
+  // Low-bandwidth users get 1120px max-edge at 0.76 quality (~90-150KB, saving ~75% data vs standard ~600KB).
+  const maxEdge = lowBandwidth ? 1120 : MAX_EDGE;
+  const quality = lowBandwidth ? 0.76 : 0.88;
+
+  const scale = Math.min(1, maxEdge / Math.max(img.naturalWidth, img.naturalHeight));
   const width = Math.max(1, Math.round(img.naturalWidth * scale));
   const height = Math.max(1, Math.round(img.naturalHeight * scale));
 
@@ -56,7 +71,7 @@ export async function prepareImage(src: string | File): Promise<PreparedImage> {
   ctx.drawImage(img, 0, 0, width, height);
 
   const mimeType = 'image/jpeg';
-  const out = canvas.toDataURL(mimeType, 0.88);
+  const out = canvas.toDataURL(mimeType, quality);
   const base64 = out.split(',')[1] || '';
   return { dataUrl: out, base64, mimeType, width, height };
 }

@@ -195,7 +195,7 @@ export const AnalysisScreen: React.FC<AnalysisScreenProps> = ({
                       onClick={() => focusFinding(f.id)}
                       aria-label={`Finding ${f.id}: ${f.pattern}, ${confidenceLabel(f.confidence)}`}
                       aria-pressed={active}
-                      className={`absolute -translate-x-1/2 -translate-y-1/2 w-7 h-7 rounded-full text-[12px] font-bold font-citation-code flex items-center justify-center shadow-lg ring-2 ring-white/90 transition-transform ${
+                      className={`absolute -translate-x-1/2 -translate-y-1/2 w-7 h-7 rounded-full text-[12px] font-bold font-citation-code flex items-center justify-center shadow-lg ring-2 ring-white/90 transition-transform after:absolute after:-inset-2.5 after:rounded-full ${
                         active ? 'scale-125' : 'hover:scale-110'
                       } ${f.confidence === 'low' ? 'bg-[#6E6E78] text-white' : f.confidence === 'medium' ? 'bg-[#F0B35A] text-[#1a1a1f]' : 'bg-[#FF7043] text-white'} ${t.focus}`}
                       style={{ left: `${(f.box.x + f.box.w / 2) * 100}%`, top: `${(f.box.y + f.box.h / 2) * 100}%` }}
@@ -209,8 +209,8 @@ export const AnalysisScreen: React.FC<AnalysisScreenProps> = ({
           </div>
           <div className={`flex items-center justify-between font-citation-code text-[11px] ${t.dim}`}>
             <span>Tap a marker to jump to its finding.</span>
-            <button type="button" onClick={onReanalyze} className={`inline-flex items-center gap-1 underline-offset-2 hover:underline ${t.focus} rounded`}>
-              <span className="material-symbols-outlined text-[14px]" aria-hidden="true">refresh</span>
+            <button type="button" onClick={onReanalyze} className={`inline-flex items-center gap-1.5 min-h-[44px] px-2 underline-offset-2 hover:underline ${t.focus} rounded`}>
+              <span className="material-symbols-outlined text-[15px]" aria-hidden="true">refresh</span>
               Re-run analysis
             </button>
           </div>
@@ -218,6 +218,30 @@ export const AnalysisScreen: React.FC<AnalysisScreenProps> = ({
 
         {/* Findings */}
         <div className="flex flex-col gap-3">
+          {/* Desktop action bar: placed at top of findings so desktop users have immediate access */}
+          {!none && (
+            <div className={`hidden lg:flex items-center gap-3 p-3 rounded-xl border shadow-sm ${t.card}`}>
+              <button
+                id="desktop-draft-complaint"
+                type="button"
+                onClick={onGoToGrievance}
+                className={`flex-1 min-h-[44px] rounded-lg font-label-md text-label-md font-semibold flex items-center justify-center gap-2 shadow-sm ${t.accentBg} ${t.focus}`}
+              >
+                <span className="material-symbols-outlined text-[18px]" aria-hidden="true">gavel</span>
+                Draft complaint
+              </button>
+              <button
+                id="desktop-share-card"
+                type="button"
+                onClick={onGoToShare}
+                className={`flex-1 min-h-[44px] rounded-lg border font-label-md text-label-md font-semibold flex items-center justify-center gap-2 ${t.secondaryBtn} ${t.focus}`}
+              >
+                <span className="material-symbols-outlined text-[18px]" aria-hidden="true">ios_share</span>
+                Share card
+              </button>
+            </div>
+          )}
+
           {none ? (
             <div className={`p-5 rounded-xl border shadow-sm flex flex-col gap-2 ${t.card}`}>
               <div className="flex items-center gap-2">
@@ -259,17 +283,26 @@ export const AnalysisScreen: React.FC<AnalysisScreenProps> = ({
                       </div>
                       <blockquote className={`font-body-md text-body-md italic border-l-2 pl-3 ${t.isDark ? 'border-[#33333C] text-[#F1EFE9]' : 'border-[#e2bfb6] text-[#1b1b20]'}`}>“{f.evidence}”</blockquote>
                       <p className={`font-body-sm text-body-sm leading-relaxed ${t.muted}`}>{f.explanation}</p>
-                      <div className={`flex flex-wrap items-center justify-between gap-2 pt-1 font-citation-code text-[11px] ${t.dim}`}>
-                        <span>{f.clause}</span>
+                      <div className={`flex flex-wrap items-center justify-between gap-2 pt-2 border-t mt-1 font-citation-code text-[11px] ${t.isDark ? 'border-[#33333C]/60 text-[#787672]' : 'border-[#e2bfb6]/60 text-[#8e7069]'}`}>
+                        <span className="font-medium truncate max-w-[240px] sm:max-w-none">{f.clause}</span>
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             setDisputed((d) => (d.includes(f.id) ? d.filter((x) => x !== f.id) : [...d, f.id]));
                           }}
-                          className={`underline-offset-2 hover:underline ${t.focus} rounded`}
+                          className={`inline-flex items-center gap-1.5 min-h-[36px] px-2.5 py-1 rounded-lg border font-label-md text-xs font-semibold transition-colors ${
+                            isDisputed
+                              ? t.isDark
+                                ? 'bg-[#FF7043]/15 text-[#FF7043] border-[#FF7043]/40'
+                                : 'bg-[#ffdad6] text-[#ae2b00] border-[#d1431a]/40'
+                              : t.secondaryBtn
+                          } ${t.focus}`}
                         >
-                          {isDisputed ? 'Marked as wrong · undo' : 'This finding looks wrong'}
+                          <span className="material-symbols-outlined text-[15px]" aria-hidden="true">
+                            {isDisputed ? 'undo' : 'flag'}
+                          </span>
+                          <span>{isDisputed ? 'Marked wrong · undo' : 'Dispute finding'}</span>
                         </button>
                       </div>
                     </div>
@@ -287,9 +320,9 @@ export const AnalysisScreen: React.FC<AnalysisScreenProps> = ({
         </div>
       </div>
 
-      {/* Actions: sticky bottom bar on phones, inline on desktop */}
-      <div className={`fixed lg:static bottom-16 lg:bottom-auto inset-x-0 lg:inset-auto z-40 px-4 lg:px-0 pb-3 lg:pb-0 pt-2 lg:pt-2 border-t lg:border-0 backdrop-blur-xl lg:backdrop-blur-none ${t.isDark ? 'bg-[#15151A]/95 border-[#33333C]' : 'bg-[#fbf8ff]/95 border-[#e2bfb6]/40'} lg:bg-transparent`}>
-        <div className="max-w-lg md:max-w-2xl lg:max-w-none mx-auto flex gap-2">
+      {/* Actions: sticky bottom bar on phones, positioned safely above BottomNav without safe-area clipping */}
+      <div className={`fixed lg:hidden bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] landscape:bottom-[calc(3.5rem+env(safe-area-inset-bottom,0px))] inset-x-0 z-40 px-4 pb-3 pt-2.5 border-t backdrop-blur-xl ${t.isDark ? 'bg-[#15151A]/95 border-[#33333C]' : 'bg-[#fbf8ff]/95 border-[#e2bfb6]/40'}`}>
+        <div className="max-w-lg md:max-w-2xl mx-auto flex gap-2">
           <button
             id="draft-complaint"
             type="button"

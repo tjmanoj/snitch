@@ -26,7 +26,7 @@ export const BottomNav: React.FC<NavProps> = ({ currentTab, theme, onSelectTab, 
   return (
     <nav
       aria-label="Primary"
-      className={`lg:hidden fixed bottom-0 inset-x-0 z-50 pb-safe transition-colors duration-200 backdrop-blur-xl ${
+      className={`lg:hidden fixed bottom-0 inset-x-0 z-50 pb-[max(0.35rem,env(safe-area-inset-bottom,0px))] transition-colors duration-200 backdrop-blur-xl ${
         t.isDark ? 'bg-[#15151A]/95 border-t border-[#33333C] text-[#A8A6A0]' : 'bg-[#fbf8ff]/95 border-t border-[#e2bfb6]/40 text-[#5a413a] shadow-[0_-1px_8px_rgba(0,0,0,0.04)]'
       }`}
     >
@@ -44,7 +44,7 @@ export const BottomNav: React.FC<NavProps> = ({ currentTab, theme, onSelectTab, 
               } ${t.focus}`}
             >
               <span className={`material-symbols-outlined text-[22px] ${active ? 'font-bold' : ''}`} aria-hidden="true">{tab.icon}</span>
-              <span className="font-citation-badge text-citation-badge uppercase tracking-wider text-[10px] md:text-[11px]">{tab.label}</span>
+              <span className="font-citation-badge text-citation-badge uppercase tracking-wider text-[10px] md:text-[11px] leading-tight select-none">{tab.label}</span>
               {tab.id === 'analysis' && !!findingsCount && (
                 <span className="absolute top-1 right-[calc(50%-22px)] md:static md:ml-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[#FF7043] text-white text-[10px] font-bold font-citation-code flex items-center justify-center" aria-label={`${findingsCount} findings`}>
                   {findingsCount}

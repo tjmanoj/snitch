@@ -222,11 +222,11 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
               <span className={`font-label-md text-label-md font-bold ${t.text}`}>Analysis didn’t go through</span>
               <p className={`font-body-sm text-body-sm leading-relaxed break-words ${t.muted}`}>{error}</p>
               <div className="flex flex-wrap gap-2 mt-1">
-                <button type="button" onClick={onDismissError} className={`font-label-md text-label-md px-2.5 py-1 rounded border ${t.secondaryBtn} ${t.focus}`}>
+                <button type="button" onClick={onDismissError} className={`font-label-md text-label-md min-h-[36px] px-3 py-1 rounded-lg border font-semibold ${t.secondaryBtn} ${t.focus}`}>
                   Dismiss
                 </button>
                 {recent.length > 0 && (
-                  <button type="button" onClick={() => onOpenRecent(recent[0])} className={`font-label-md text-label-md px-2.5 py-1 rounded ${t.accentBg} ${t.focus}`}>
+                  <button type="button" onClick={() => onOpenRecent(recent[0])} className={`font-label-md text-label-md min-h-[36px] px-3 py-1 rounded-lg font-semibold shadow-sm ${t.accentBg} ${t.focus}`}>
                     Open last real scan
                   </button>
                 )}
@@ -297,7 +297,7 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
                   <button
                     type="button"
                     onClick={() => onRemoveRecent(r.id)}
-                    className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${t.dim} ${t.hoverAccent} ${t.focus}`}
+                    className={`min-w-[44px] min-h-[44px] rounded-lg flex items-center justify-center shrink-0 transition-colors ${t.dim} ${t.hoverAccent} ${t.focus}`}
                     aria-label="Remove from recent scans"
                     title="Remove"
                   >

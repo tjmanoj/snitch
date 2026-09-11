@@ -9,7 +9,7 @@ import { GrievanceScreen, type GrievanceDraft } from './components/GrievanceScre
 import { PatternsScreen } from './components/PatternsScreen';
 import { HelplineModal } from './components/HelplineModal';
 import { analyzeImage, checkHealth, friendlyError, type HealthResponse } from './lib/api';
-import { fetchImageAsDataUrl, readFileAsDataUrl } from './lib/image';
+import { fetchImageAsDataUrl, isLowBandwidth, readFileAsDataUrl } from './lib/image';
 import { loadRecent, removeRecent } from './lib/storage';
 import { tokens } from './lib/theme';
 
@@ -43,7 +43,25 @@ export const App: React.FC = () => {
   const [draft, setDraft] = useState<GrievanceDraft | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [isHelplineOpen, setIsHelplineOpen] = useState(false);
+  const [online, setOnline] = useState<boolean>(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
+  const [lowBw, setLowBw] = useState<boolean>(() => isLowBandwidth());
   const runRef = useRef(0);
+
+  useEffect(() => {
+    const updateNet = () => {
+      setOnline(typeof navigator !== 'undefined' ? navigator.onLine : true);
+      setLowBw(isLowBandwidth());
+    };
+    window.addEventListener('online', updateNet);
+    window.addEventListener('offline', updateNet);
+    const conn = (navigator as any)?.connection || (navigator as any)?.mozConnection || (navigator as any)?.webkitConnection;
+    conn?.addEventListener?.('change', updateNet);
+    return () => {
+      window.removeEventListener('online', updateNet);
+      window.removeEventListener('offline', updateNet);
+      conn?.removeEventListener?.('change', updateNet);
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -151,7 +169,34 @@ export const App: React.FC = () => {
           <span className={`px-2 py-[3px] rounded border font-citation-badge text-citation-badge uppercase font-semibold ${health ? (health.configured ? t.tealSoft : t.amberSoft) : t.neutralSoft}`}>{apiLabel}</span>
         </div>
 
-        <main id="main" className="flex-1 w-full max-w-lg md:max-w-2xl lg:max-w-6xl mx-auto px-4 md:px-6 lg:px-8 pt-20 lg:pt-6 pb-24 lg:pb-10 landscape:pt-[4.5rem]">
+        {/* Dynamic bottom padding for mobile:
+            When on AnalysisScreen with findings, fixed bottom chrome is 132px+ (BottomNav + Action Bar).
+            We allocate 11.5rem (~184px) + safe-area so the regulatory footer letters are never cut off.
+            On other tabs, 6.5rem (~104px) + safe-area clears the 64px BottomNav with ample 40px clearance. */}
+        <main
+          id="main"
+          className={`flex-1 w-full max-w-lg md:max-w-2xl lg:max-w-6xl mx-auto px-4 md:px-6 lg:px-8 pt-20 lg:pt-6 ${
+            currentTab === 'analysis' && status === 'done' && (result?.findings?.length ?? 0) > 0
+              ? 'pb-[calc(11.5rem+env(safe-area-inset-bottom,0px))] landscape:pb-[calc(9.5rem+env(safe-area-inset-bottom,0px))] lg:pb-10'
+              : 'pb-[calc(6.5rem+env(safe-area-inset-bottom,0px))] landscape:pb-[calc(5rem+env(safe-area-inset-bottom,0px))] lg:pb-10'
+          } landscape:pt-[4.5rem]`}
+        >
+          {/* Offline / Low-Bandwidth Status Banner */}
+          {!online && (
+            <div role="status" className="mb-4 rounded-xl bg-[#FF7043]/15 border border-[#FF7043]/30 px-3.5 py-2.5 text-[12px] font-semibold text-[#FF7043] flex items-center gap-2.5 shadow-sm">
+              <span className="material-symbols-outlined text-[20px] shrink-0" aria-hidden="true">wifi_off</span>
+              <div className="flex flex-col">
+                <span className="font-bold">Offline mode active</span>
+                <span className="text-[11px] font-normal opacity-90">13 CCPA guidelines, grievance drafting, and previous scans remain fully usable offline.</span>
+              </div>
+            </div>
+          )}
+          {online && lowBw && (
+            <div role="status" className="mb-4 rounded-xl bg-[#2DD4BF]/10 border border-[#2DD4BF]/25 px-3.5 py-2 text-[11px] font-citation-code text-[#2DD4BF] flex items-center gap-2 shadow-sm">
+              <span className="material-symbols-outlined text-[16px] shrink-0" aria-hidden="true">speed</span>
+              <span>Low-bandwidth network · Adaptive screenshot compression active (saving ~75% data)</span>
+            </div>
+          )}
           {currentTab === 'scan' && (
             <ScanScreen
               theme={theme}

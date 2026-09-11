@@ -1,0 +1,29 @@
+{
+  "name": "Snitch — CCPA Dark Pattern Watchdog",
+  "short_name": "Snitch",
+  "description": "Screenshot a manipulative checkout or subscription screen. Snitch names the dark pattern live, cites India's 2023 CCPA guidelines, and drafts your consumer complaint.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#15151A",
+  "theme_color": "#15151A",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon-32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "maskable any"
+    }
+  ]
+}

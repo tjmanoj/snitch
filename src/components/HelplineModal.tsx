@@ -18,7 +18,7 @@ export const HelplineModal: React.FC<HelplineModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
       <div
-        className={`w-full max-w-md rounded-2xl p-5 border shadow-2xl relative ${
+        className={`w-full max-w-md max-h-[90dvh] overflow-y-auto rounded-2xl p-5 border shadow-2xl relative ${
           isDark
             ? 'bg-[#1B1B21] border-[#33333C] text-[#F1EFE9]'
             : 'bg-white border-[#e2bfb6] text-[#1b1b20]'
@@ -27,7 +27,8 @@ export const HelplineModal: React.FC<HelplineModalProps> = ({
         <button
           type="button"
           onClick={onClose}
-          className={`absolute top-4 right-4 p-1 rounded-full ${
+          aria-label="Close modal"
+          className={`absolute top-2.5 right-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full transition-colors ${
             isDark
               ? 'text-[#A8A6A0] hover:text-white hover:bg-[#23232B]'
               : 'text-[#5a413a] hover:text-[#1b1b20] hover:bg-[#f0edf4]'
@@ -139,7 +140,7 @@ export const HelplineModal: React.FC<HelplineModalProps> = ({
         <button
           type="button"
           onClick={onClose}
-          className={`w-full py-2.5 rounded-lg border font-label-md font-semibold transition-colors ${
+          className={`w-full min-h-[44px] py-2.5 rounded-lg border font-label-md font-semibold transition-colors ${
             isDark
               ? 'bg-[#15151A] border-[#33333C] text-[#A8A6A0] hover:text-white'
               : 'bg-white border-[#e2bfb6] text-[#5a413a] hover:text-[#1b1b20]'

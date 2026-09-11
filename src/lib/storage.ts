@@ -55,3 +55,7 @@ export function removeRecent(id: string): void {
 export function clearRecent(): void {
   safeSet(RECENT_KEY, '[]');
 }
+
+export function isOnline(): boolean {
+  return typeof navigator !== 'undefined' && typeof navigator.onLine === 'boolean' ? navigator.onLine : true;
+}

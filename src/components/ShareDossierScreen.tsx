@@ -333,7 +333,7 @@ export const ShareDossierScreen: React.FC<ShareCardScreenProps> = ({ theme, resu
       </div>
 
       {toast && (
-        <div role="status" className={`fixed bottom-24 lg:bottom-8 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-xl border font-label-md text-label-md ${t.isDark ? 'bg-[#23232B] border-[#33333C] text-[#F1EFE9]' : 'bg-white border-[#d9d6ce] text-[#1b1b20]'}`}>
+        <div role="status" className={`fixed bottom-[calc(5rem+env(safe-area-inset-bottom,0px))] lg:bottom-8 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-xl border font-label-md text-label-md ${t.isDark ? 'bg-[#23232B] border-[#33333C] text-[#F1EFE9]' : 'bg-white border-[#d9d6ce] text-[#1b1b20]'}`}>
           {toast}
         </div>
       )}
