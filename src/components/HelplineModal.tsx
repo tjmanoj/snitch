@@ -44,8 +44,8 @@ export const HelplineModal: React.FC<HelplineModalProps> = ({
                 : 'bg-[#ffdad6] text-[#ae2b00]'
             }`}
           >
-            <span className="material-symbols-outlined text-[24px]">
-              emergency
+            <span className="material-symbols-outlined text-[24px]" aria-hidden="true">
+              support_agent
             </span>
           </div>
           <div>

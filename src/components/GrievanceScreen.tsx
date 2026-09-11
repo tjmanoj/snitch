@@ -1,534 +1,316 @@
-import React, { useState } from 'react';
-import { ThemeMode, AuditDocket } from '../types';
+import React, { useEffect, useRef, useState } from 'react';
+import type { AuditResult, GrievanceRequest, ThemeMode } from '../types';
+import { tokens } from '../lib/theme';
+import { ApiError, draftGrievance, templateGrievance } from '../lib/api';
+
+export interface GrievanceDraft {
+  resultId: string;
+  tone: 'formal' | 'simple';
+  subject: string;
+  body: string;
+  source: 'model' | 'template';
+}
 
 interface GrievanceScreenProps {
   theme: ThemeMode;
-  docket: AuditDocket;
+  result: AuditResult | null;
+  draft: GrievanceDraft | null;
+  onDraftChange: (d: GrievanceDraft | null) => void;
   onGoToAnalysis: () => void;
+  onGoToScan: () => void;
+  onOpenHelpline: () => void;
 }
 
-export const GrievanceScreen: React.FC<GrievanceScreenProps> = ({
-  theme,
-  docket,
-  onGoToAnalysis,
-}) => {
-  const isDark = theme === 'dark';
-  const [complainantName, setComplainantName] = useState('Ananya Sharma');
-  const [complainantPhone, setComplainantPhone] = useState('98765 43210');
-  const [complainantEmail, setComplainantEmail] = useState('consumer.alert@india.gov.in');
-  const [orderId, setOrderId] = useState('ZP-9482049');
-  const [claimedAmount, setClaimedAmount] = useState('28.00');
-  const [copied, setCopied] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+const NCH_URL = 'https://consumerhelpline.gov.in';
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage(null);
-    }, 2400);
+export const GrievanceScreen: React.FC<GrievanceScreenProps> = ({ theme, result, draft, onDraftChange, onGoToAnalysis, onGoToScan, onOpenHelpline }) => {
+  const t = tokens(theme);
+
+  // Complainant details start EMPTY. Nothing is pre-filled.
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [orderId, setOrderId] = useState('');
+  const [amount, setAmount] = useState('');
+  const [tone, setTone] = useState<'formal' | 'simple'>(draft?.tone ?? 'formal');
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reviewed, setReviewed] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const abortRef = useRef<{ cancelled: boolean } | null>(null);
+
+  const showToast = (m: string) => {
+    setToast(m);
+    setTimeout(() => setToast(null), 2400);
   };
 
-  const legalPetitionText = `FORMAL GRIEVANCE PETITION UNDER SECTION 18 & SECTION 2(47)
-OF THE CONSUMER PROTECTION ACT, 2019
-READ WITH CCPA GUIDELINES FOR PREVENTION OF DARK PATTERNS, 2023
+  const buildPayload = (): GrievanceRequest | null => {
+    if (!result || result.findings.length === 0) return null;
+    return {
+      platform: result.platformGuess,
+      screenType: result.screenType,
+      observedAt: result.analyzedAt,
+      findings: result.findings.map((f) => ({ pattern: f.pattern, annexItem: f.annexItem, evidence: f.evidence, explanation: f.explanation, confidence: f.confidence })),
+      complainant: {
+        name: name.trim() || undefined,
+        phone: phone.trim() || undefined,
+        email: email.trim() || undefined,
+        orderId: orderId.trim() || undefined,
+        amount: amount.trim() || undefined,
+      },
+      tone,
+    };
+  };
 
-To:
-The Central Consumer Protection Authority (CCPA) &
-National Consumer Helpline (NCH / INGRAM Portal)
-Department of Consumer Affairs, Government of India.
+  const generate = async (nextTone: 'formal' | 'simple' = tone) => {
+    const payload = buildPayload();
+    if (!payload || !result) return;
+    payload.tone = nextTone;
+    const token = { cancelled: false };
+    abortRef.current = token;
+    setLoading(true);
+    setError(null);
+    setReviewed(false);
+    try {
+      const res = await draftGrievance(payload);
+      if (token.cancelled) return;
+      onDraftChange({ resultId: result.id, tone: nextTone, subject: res.subject, body: res.body, source: 'model' });
+    } catch (err: any) {
+      if (token.cancelled) return;
+      const tpl = templateGrievance(payload);
+      onDraftChange({ resultId: result.id, tone: nextTone, subject: tpl.subject, body: tpl.body, source: 'template' });
+      setError(
+        (err instanceof ApiError ? err.message : 'Drafting service unavailable.') +
+          ' A template filled from your real findings is shown instead — edit it before sending.',
+      );
+    } finally {
+      if (!token.cancelled) setLoading(false);
+    }
+  };
 
-COMPLAINANT DETAILS:
-Name: ${complainantName}
-Mobile: +91 ${complainantPhone}
-Email: ${complainantEmail}
+  // Generate once per analysis result.
+  useEffect(() => {
+    if (!result || result.findings.length === 0) return;
+    if (draft && draft.resultId === result.id) return;
+    generate(tone);
+    return () => {
+      if (abortRef.current) abortRef.current.cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result?.id]);
 
-OPPOSITE PARTY (RESPONDENT):
-Entity: ${
-    docket.id === 'zepto-cart'
-      ? 'KiranaKart Technologies Private Limited (Zepto)'
-      : docket.domain
+  const canSend = !!draft && reviewed && !loading;
+
+  const copyAll = async () => {
+    if (!draft) return;
+    const text = `Subject: ${draft.subject}\n\n${draft.body}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('Complaint copied. Paste it into the helpline form.');
+    } catch {
+      showToast('Copy failed — select the text and copy manually.');
+    }
+  };
+
+  /* -------------------------------------------------- guards */
+  if (!result) {
+    return (
+      <div className="flex flex-col w-full pb-6 gap-4 max-w-xl">
+        <span className={`font-citation-badge text-citation-badge tracking-wider uppercase font-semibold ${t.dim}`}>Grievance</span>
+        <h2 className={`font-display-lg-mobile text-display-lg-mobile tracking-tight ${t.text}`}>Analyse a screenshot first.</h2>
+        <p className={`font-body-md text-body-md leading-relaxed ${t.muted}`}>The complaint is written from the real findings of your scan, so there is nothing to draft yet.</p>
+        <button type="button" onClick={onGoToScan} className={`self-start min-h-[44px] px-4 rounded-lg font-label-md text-label-md font-semibold ${t.accentBg} ${t.focus}`}>Go to Scan</button>
+      </div>
+    );
   }
-CIN / Registration: U74999MH2020PTC349033
-Domain: https://${docket.domain}
-Order / Transaction Ref: #${orderId}
+  if (result.findings.length === 0) {
+    return (
+      <div className="flex flex-col w-full pb-6 gap-4 max-w-xl">
+        <span className={`font-citation-badge text-citation-badge tracking-wider uppercase font-semibold ${t.dim}`}>Grievance</span>
+        <h2 className={`font-display-lg-mobile text-display-lg-mobile tracking-tight ${t.text}`}>Nothing to complain about — good news.</h2>
+        <p className={`font-body-md text-body-md leading-relaxed ${t.muted}`}>The last scan of {result.platformGuess} found no prohibited patterns, so no grievance is needed. Try the next screen in the flow (payment, cancel) if something felt off.</p>
+        <button type="button" onClick={onGoToScan} className={`self-start min-h-[44px] px-4 rounded-lg font-label-md text-label-md font-semibold ${t.accentBg} ${t.focus}`}>Scan another screen</button>
+      </div>
+    );
+  }
 
-SUBJECT: UNFAIR TRADE PRACTICE VIA PROHIBITED DARK PATTERNS IN E-COMMERCE CHECKOUT FLOW
-
-RESPECTFULLY SHEWETH:
-1. The Complainant attempted a routine transaction on the Respondent’s platform. During checkout, the Respondent deployed deceptive UI modalities strictly prohibited under the statutory CCPA Notification 2023:
-   a) BASKET SNEAKING (Clause 4(1)(b)): The Respondent surreptitiously auto-added handling fees and green packaging charges (+₹${claimedAmount}) without affirmative consumer consent.
-   b) FALSE URGENCY (Clause 4(1)(a)): Fabricated 04:59 countdown timer stating "Only 2 slots left" designed to coerce irrational impulse purchase.
-   c) CONFIRM SHAMING (Clause 4(1)(c)): Using manipulative phrasing ("No thanks, I hate saving trees") when attempting to decline the unsolicited add-on.
-
-RELIEF PRAYED FOR:
-1. Immediate refund of unauthorized debited charges amounting to ₹${claimedAmount}.
-2. Issuance of Cease and Desist directions under Section 18 of the Consumer Protection Act, 2019.
-3. Imposition of statutory penalty under Section 21 of the Act for willful deceptive design.
-
-VERIFICATION:
-I, ${complainantName}, hereby verify that the forensic screenshot hash and transaction evidence submitted herewith are true and authentic.
-
-Date: ${new Date().toLocaleDateString('en-IN', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  })}
-Filed via: SNITCH Statutory Forensic Engine (Dossier #CCPA-8492)`;
-
-  const handleCopyNotice = () => {
-    navigator.clipboard.writeText(legalPetitionText);
-    setCopied(true);
-    showToast('Formal Legal Notice copied to clipboard!');
-    setTimeout(() => setCopied(false), 3000);
-  };
-
-  const handleOpenNCH = () => {
-    window.open('https://consumerhelpline.gov.in', '_blank');
-    showToast('Redirecting to official INGRAM / NCH Consumer Portal...');
-  };
-
-  const handleExportPDF = () => {
-    showToast('Exporting Court-Admissible Section 2(47) Evidence Dossier PDF...');
-    setTimeout(() => {
-      const element = document.createElement('a');
-      const file = new Blob([legalPetitionText], { type: 'text/plain' });
-      element.href = URL.createObjectURL(file);
-      element.download = `CCPA_Legal_Grievance_${docket.domain}_${Date.now()}.txt`;
-      document.body.appendChild(element);
-      element.click();
-      document.body.removeChild(element);
-      showToast('Grievance Affidavit saved to downloads!');
-    }, 600);
-  };
+  /* -------------------------------------------------- main */
+  const inputCls = `w-full min-h-[44px] rounded-lg border px-3 text-[16px] md:text-[14px] ${t.input} ${t.focus}`;
+  const labelCls = `font-citation-badge text-citation-badge uppercase tracking-wider font-semibold ${t.dim}`;
 
   return (
-    <div className="flex flex-col w-full pb-20 space-y-4">
-      {/* Top Banner */}
+    <div className="flex flex-col w-full pb-6 gap-4">
       <div className="flex flex-col gap-1">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            <span
-              className={`w-2 h-2 rounded-full ${
-                isDark ? 'bg-[#FF7043]' : 'bg-[#ae2b00]'
-              }`}
-            />
-            <span
-              className={`font-citation-badge text-citation-badge uppercase tracking-wider font-semibold ${
-                isDark ? 'text-[#FF7043]' : 'text-[#ae2b00]'
-              }`}
-            >
-              National Consumer Helpline 1915
-            </span>
-          </div>
-          <span
-            className={`font-citation-badge text-citation-badge uppercase px-2 py-0.5 rounded font-bold border ${
-              isDark
-                ? 'bg-[#2DD4BF]/15 border-[#2DD4BF]/30 text-[#2DD4BF]'
-                : 'bg-[#9cefdf] text-[#006b5e]'
-            }`}
-          >
-            Section 2(47) Redressal
-          </span>
-        </div>
-
-        <h1
-          className={`font-headline-lg text-headline-lg font-bold tracking-tight ${
-            isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-          }`}
-        >
-          Statutory NCH Grievance
-        </h1>
-        <p
-          className={`font-body-md text-body-md ${
-            isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-          }`}
-        >
-          Generated petition bundle formatted for INGRAM (National Consumer Helpline)
-          and the Department of Consumer Affairs.
+        <button type="button" onClick={onGoToAnalysis} className={`self-start inline-flex items-center gap-1 font-label-md text-label-md ${t.muted} ${t.hoverText} ${t.focus} rounded`}>
+          <span className="material-symbols-outlined text-[16px]" aria-hidden="true">arrow_back</span>
+          Back to findings
+        </button>
+        <h2 className={`font-headline-lg text-headline-lg md:font-display-lg-mobile tracking-tight ${t.text}`}>Grievance to the National Consumer Helpline</h2>
+        <p className={`font-body-md text-body-md leading-relaxed max-w-prose ${t.muted}`}>
+          Written live from the {result.findings.length} finding{result.findings.length === 1 ? '' : 's'} on {result.platformGuess}. Fill in your details, read it, then send it yourself on the portal or by calling 1915.
         </p>
       </div>
 
-      {/* Target Respondent Enterprise Card */}
-      <div
-        className={`rounded-xl p-3.5 border shadow-md flex flex-col gap-2 ${
-          isDark
-            ? 'bg-[#1B1B21] border-[#33333C]'
-            : 'bg-white border-[#e2bfb6]/70'
-        }`}
-      >
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <div
-              className={`w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 ${
-                isDark
-                  ? 'bg-[#23232B] border-[#33333C] text-[#FF7043]'
-                  : 'bg-[#ffdad6] border-[#d1431a]/30 text-[#ae2b00]'
-              }`}
-            >
-              <span className="material-symbols-outlined text-[20px]">
-                gavel
-              </span>
-            </div>
-            <div className="flex flex-col">
-              <span
-                className={`font-headline-sm text-headline-sm font-bold ${
-                  isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-                }`}
-              >
-                {docket.id === 'zepto-cart'
-                  ? 'KiranaKart Technologies Private Limited'
-                  : docket.domain}
-              </span>
-              <span
-                className={`font-citation-code text-[11px] ${
-                  isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-                }`}
-              >
-                CIN: U74999MH2020PTC349033 • Domain: {docket.domain}
-              </span>
-            </div>
-          </div>
-          <span
-            className={`font-citation-badge text-citation-badge uppercase px-2 py-0.5 rounded font-bold shrink-0 ${
-              isDark
-                ? 'bg-[#FF7043]/15 text-[#FF7043]'
-                : 'bg-[#ffdad6] text-[#ae2b00]'
-            }`}
-          >
-            Respondent
-          </span>
-        </div>
-
-        {/* 3 Pre-categorized Infraction Claims */}
-        <div
-          className={`p-2.5 rounded-lg border flex flex-col gap-1.5 ${
-            isDark
-              ? 'bg-[#23232B] border-[#33333C]'
-              : 'bg-[#f5f2fa] border-[#e2bfb6]'
-          }`}
-        >
-          <span
-            className={`font-citation-badge text-citation-badge uppercase font-bold ${
-              isDark ? 'text-[#787672]' : 'text-[#8e7069]'
-            }`}
-          >
-            STATUTORY CLAIMS ATTACHED
-          </span>
-
-          <div className="flex items-center justify-between text-body-sm">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#FF7043]" />
-              <span
-                className={`truncate ${
-                  isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-                }`}
-              >
-                Non-consensual Basket Sneaking
-              </span>
-            </div>
-            <span className="font-citation-code text-citation-code font-bold text-[#FF7043] shrink-0">
-              Clause 4(1)(b)
-            </span>
-          </div>
-
-          <div className="flex items-center justify-between text-body-sm">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#FF7043]" />
-              <span
-                className={`truncate ${
-                  isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-                }`}
-              >
-                Fabricated Scarcity Urgency Clock
-              </span>
-            </div>
-            <span className="font-citation-code text-citation-code font-bold text-[#FF7043] shrink-0">
-              Clause 4(1)(a)
-            </span>
-          </div>
-
-          <div className="flex items-center justify-between text-body-sm">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#FF7043]" />
-              <span
-                className={`truncate ${
-                  isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-                }`}
-              >
-                Emotional Confirm Shaming Opt-Out
-              </span>
-            </div>
-            <span className="font-citation-code text-citation-code font-bold text-[#FF7043] shrink-0">
-              Clause 4(1)(c)
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Complainant Details Form */}
-      <div
-        className={`rounded-xl p-3.5 border shadow-md flex flex-col gap-3 ${
-          isDark
-            ? 'bg-[#1B1B21] border-[#33333C]'
-            : 'bg-white border-[#e2bfb6]/70'
-        }`}
-      >
-        <span
-          className={`font-label-md text-label-md font-bold uppercase ${
-            isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-          }`}
-        >
-          Complainant Particulars
-        </span>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="flex flex-col gap-1">
-            <label
-              className={`font-citation-badge text-citation-badge uppercase ${
-                isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-              }`}
-            >
-              Complainant Legal Name
+      <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:gap-8 lg:items-start">
+        {/* Form */}
+        <div className={`p-4 rounded-xl border shadow-sm flex flex-col gap-3 ${t.card}`}>
+          <span className={labelCls}>Your details (optional — never pre-filled)</span>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1">
+              <span className={`font-body-sm text-body-sm ${t.muted}`}>Your name</span>
+              <input id="g-name" className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="As on your ID" autoComplete="name" />
             </label>
-            <input
-              type="text"
-              value={complainantName}
-              onChange={(e) => setComplainantName(e.target.value)}
-              className={`w-full h-10 px-3 rounded-lg border font-body-sm outline-none transition-colors ${
-                isDark
-                  ? 'bg-[#23232B] border-[#33333C] text-[#F1EFE9] focus:border-[#FF7043]'
-                  : 'bg-[#f5f2fa] border-[#e2bfb6] text-[#1b1b20] focus:border-[#ae2b00]'
-              }`}
-            />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label
-              className={`font-citation-badge text-citation-badge uppercase ${
-                isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-              }`}
-            >
-              Mobile (NCH OTP verification)
+            <label className="flex flex-col gap-1">
+              <span className={`font-body-sm text-body-sm ${t.muted}`}>Mobile number</span>
+              <input id="g-phone" className={inputCls} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="10-digit number" inputMode="tel" autoComplete="tel" />
             </label>
-            <input
-              type="text"
-              value={complainantPhone}
-              onChange={(e) => setComplainantPhone(e.target.value)}
-              className={`w-full h-10 px-3 rounded-lg border font-body-sm outline-none transition-colors ${
-                isDark
-                  ? 'bg-[#23232B] border-[#33333C] text-[#F1EFE9] focus:border-[#FF7043]'
-                  : 'bg-[#f5f2fa] border-[#e2bfb6] text-[#1b1b20] focus:border-[#ae2b00]'
-              }`}
-            />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label
-              className={`font-citation-badge text-citation-badge uppercase ${
-                isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-              }`}
-            >
-              Email Address
+            <label className="flex flex-col gap-1">
+              <span className={`font-body-sm text-body-sm ${t.muted}`}>Email</span>
+              <input id="g-email" className={inputCls} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Optional" inputMode="email" autoComplete="email" />
             </label>
-            <input
-              type="email"
-              value={complainantEmail}
-              onChange={(e) => setComplainantEmail(e.target.value)}
-              className={`w-full h-10 px-3 rounded-lg border font-body-sm outline-none transition-colors ${
-                isDark
-                  ? 'bg-[#23232B] border-[#33333C] text-[#F1EFE9] focus:border-[#FF7043]'
-                  : 'bg-[#f5f2fa] border-[#e2bfb6] text-[#1b1b20] focus:border-[#ae2b00]'
-              }`}
-            />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label
-              className={`font-citation-badge text-citation-badge uppercase ${
-                isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-              }`}
-            >
-              Order / Payment Ref ID
+            <label className="flex flex-col gap-1">
+              <span className={`font-body-sm text-body-sm ${t.muted}`}>Order / booking ID</span>
+              <input id="g-order" className={inputCls} value={orderId} onChange={(e) => setOrderId(e.target.value)} placeholder="Optional" />
             </label>
-            <input
-              type="text"
-              value={orderId}
-              onChange={(e) => setOrderId(e.target.value)}
-              className={`w-full h-10 px-3 rounded-lg border font-body-sm outline-none transition-colors ${
-                isDark
-                  ? 'bg-[#23232B] border-[#33333C] text-[#F1EFE9] focus:border-[#FF7043]'
-                  : 'bg-[#f5f2fa] border-[#e2bfb6] text-[#1b1b20] focus:border-[#ae2b00]'
-              }`}
-            />
+            <label className="flex flex-col gap-1 sm:col-span-2">
+              <span className={`font-body-sm text-body-sm ${t.muted}`}>Amount affected (₹)</span>
+              <input id="g-amount" className={inputCls} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 49 — hidden fee or unconsented charge" inputMode="decimal" />
+            </label>
           </div>
-        </div>
 
-        <div className="flex flex-col gap-1">
-          <label
-            className={`font-citation-badge text-citation-badge uppercase ${
-              isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-            }`}
-          >
-            Claimed Unauthorized Overcharge (₹ INR)
-          </label>
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={claimedAmount}
-              onChange={(e) => setClaimedAmount(e.target.value)}
-              className={`w-32 h-10 px-3 rounded-lg border font-citation-code font-bold outline-none ${
-                isDark
-                  ? 'bg-[#23232B] border-[#33333C] text-[#FF7043]'
-                  : 'bg-[#f5f2fa] border-[#e2bfb6] text-[#ae2b00]'
-              }`}
-            />
-            <span
-              className={`font-body-sm text-body-sm ${
-                isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-              }`}
-            >
-              Auto-calculated from basket sneaking charges
-            </span>
+          <div className="flex flex-col gap-1 pt-1">
+            <span className={labelCls}>Tone</span>
+            <div className="flex gap-2" role="radiogroup" aria-label="Tone">
+              {(['formal', 'simple'] as const).map((tn) => (
+                <button
+                  key={tn}
+                  type="button"
+                  role="radio"
+                  aria-checked={tone === tn}
+                  onClick={() => setTone(tn)}
+                  className={`min-h-[40px] px-3 rounded-lg border font-label-md text-label-md font-semibold capitalize ${tone === tn ? t.accentSoft : t.secondaryBtn} ${t.focus}`}
+                >
+                  {tn === 'formal' ? 'Formal' : 'Simple English'}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-      </div>
 
-      {/* Petition Preview Drawer */}
-      <div
-        className={`rounded-xl p-3.5 border shadow-md flex flex-col gap-2 ${
-          isDark
-            ? 'bg-[#1B1B21] border-[#33333C]'
-            : 'bg-white border-[#e2bfb6]/70'
-        }`}
-      >
-        <div className="flex items-center justify-between">
-          <span
-            className={`font-label-md text-label-md font-bold uppercase ${
-              isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-            }`}
-          >
-            Legal Notice Drafting
-          </span>
           <button
+            id="regenerate"
             type="button"
-            onClick={handleCopyNotice}
-            className={`font-label-md text-label-md py-1 px-2.5 rounded flex items-center gap-1 transition-all ${
-              copied
-                ? 'bg-[#2DD4BF] text-[#00382f] font-bold'
-                : isDark
-                ? 'bg-[#FF7043] text-[#15151A] hover:bg-[#ff845e]'
-                : 'bg-[#ae2b00] text-white hover:bg-[#d1431a]'
-            }`}
+            disabled={loading}
+            onClick={() => generate(tone)}
+            className={`min-h-[44px] rounded-lg font-label-md text-label-md font-semibold flex items-center justify-center gap-2 disabled:opacity-50 ${t.accentBg} ${t.focus}`}
           >
-            <span className="material-symbols-outlined text-[16px]">
-              {copied ? 'check' : 'content_copy'}
-            </span>
-            <span>{copied ? 'Copied Petition' : 'Copy Notice'}</span>
-          </button>
-        </div>
-
-        <pre
-          className={`p-3 rounded-lg font-citation-code text-[11px] leading-relaxed max-h-[160px] overflow-y-auto whitespace-pre-wrap select-all border ${
-            isDark
-              ? 'bg-[#121216] border-[#33333C] text-[#A8A6A0]'
-              : 'bg-[#f5f2fa] border-[#e2bfb6] text-[#5a413a]'
-          }`}
-        >
-          {legalPetitionText}
-        </pre>
-      </div>
-
-      {/* Primary Actions */}
-      <div className="flex flex-col gap-2">
-        <button
-          type="button"
-          onClick={handleOpenNCH}
-          className={`w-full h-12 rounded-xl font-headline-sm text-headline-sm flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-[0.99] font-bold ${
-            isDark
-              ? 'bg-[#FF7043] hover:bg-[#ff845e] text-white'
-              : 'bg-[#ae2b00] hover:bg-[#d1431a] text-white'
-          }`}
-        >
-          <span className="material-symbols-outlined text-[20px]">
-            open_in_new
-          </span>
-          <span>File on INGRAM Portal (NCH 1915)</span>
-        </button>
-
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={handleExportPDF}
-            className={`h-11 rounded-lg border font-label-md text-label-md flex items-center justify-center gap-1.5 shadow-sm transition-all active:scale-[0.99] font-semibold ${
-              isDark
-                ? 'bg-[#1B1B21] border-[#33333C] text-[#F1EFE9] hover:bg-[#23232B]'
-                : 'bg-white border-[#e2bfb6] text-[#1b1b20] hover:bg-[#f5f2fa]'
-            }`}
-          >
-            <span className="material-symbols-outlined text-[18px]">
-              picture_as_pdf
-            </span>
-            <span>Export Affidavit</span>
+            <span className={`material-symbols-outlined text-[18px] ${loading ? 'animate-spin motion-reduce:animate-none' : ''}`} aria-hidden="true">{loading ? 'progress_activity' : 'auto_awesome'}</span>
+            {loading ? 'Drafting…' : draft ? 'Regenerate with these details' : 'Draft complaint'}
           </button>
 
-          <a
-            href="tel:1915"
-            className={`h-11 rounded-lg border font-label-md text-label-md flex items-center justify-center gap-1.5 shadow-sm transition-all active:scale-[0.99] font-semibold ${
-              isDark
-                ? 'bg-[#1B1B21] border-[#33333C] text-[#2DD4BF] hover:bg-[#23232B]'
-                : 'bg-white border-[#e2bfb6] text-[#006b5e] hover:bg-[#f5f2fa]'
-            }`}
-          >
-            <span className="material-symbols-outlined text-[18px]">call</span>
-            <span>Dial 1915 Helpline</span>
-          </a>
+          <div className={`p-3 rounded-lg border flex items-start gap-2 ${t.cardAlt}`}>
+            <span className={`material-symbols-outlined text-[18px] shrink-0 ${t.teal}`} aria-hidden="true">info</span>
+            <p className={`font-body-sm text-body-sm leading-relaxed ${t.muted}`}>
+              <strong className={t.text}>You send it. Snitch never submits on your behalf.</strong> This is not legal advice. Attach the screenshot when you file.
+            </p>
+          </div>
+        </div>
+
+        {/* Draft */}
+        <div className={`p-4 rounded-xl border shadow-sm flex flex-col gap-3 ${t.card}`}>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <span className={labelCls}>Complaint text · editable</span>
+            {draft && (
+              <span className={`px-2 py-[2px] rounded border font-citation-badge text-citation-badge uppercase font-semibold ${draft.source === 'model' ? t.tealSoft : t.amberSoft}`}>
+                {draft.source === 'model' ? 'Drafted live' : 'Template fallback'}
+              </span>
+            )}
+          </div>
+
+          {error && (
+            <div role="alert" className={`px-3 py-2 rounded-lg border font-body-sm text-body-sm ${t.amberSoft}`}>
+              {error}
+            </div>
+          )}
+
+          {loading && !draft ? (
+            <div className={`flex flex-col gap-2 py-6 items-center text-center ${t.muted}`} role="status" aria-live="polite">
+              <div className={`w-8 h-8 border-4 rounded-full animate-spin motion-reduce:animate-none ${t.isDark ? 'border-[#FF7043] border-t-transparent' : 'border-[#ae2b00] border-t-transparent'}`} />
+              <span className="font-body-sm text-body-sm">Writing your grievance from the findings…</span>
+            </div>
+          ) : draft ? (
+            <>
+              <label className="flex flex-col gap-1">
+                <span className={`font-body-sm text-body-sm ${t.muted}`}>Subject</span>
+                <input id="g-subject" className={inputCls} value={draft.subject} onChange={(e) => onDraftChange({ ...draft, subject: e.target.value })} />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className={`font-body-sm text-body-sm ${t.muted}`}>Body</span>
+                <textarea
+                  id="g-body"
+                  className={`w-full rounded-lg border px-3 py-2 text-[16px] md:text-[14px] leading-relaxed min-h-[320px] resize-y ${t.input} ${t.focus}`}
+                  value={draft.body}
+                  onChange={(e) => onDraftChange({ ...draft, body: e.target.value })}
+                />
+              </label>
+              <div className={`flex items-center justify-between font-citation-code text-[11px] ${t.dim}`}>
+                <span>{draft.body.length} characters · {draft.body.trim().split(/\s+/).filter(Boolean).length} words</span>
+                <button type="button" disabled={loading} onClick={() => { setTone('simple'); generate('simple'); }} className={`underline-offset-2 hover:underline disabled:opacity-50 ${t.focus} rounded`}>
+                  Regenerate in simpler language
+                </button>
+              </div>
+
+              <label className={`flex items-start gap-2 pt-1 cursor-pointer ${t.text}`}>
+                <input id="g-reviewed" type="checkbox" className="mt-1 w-4 h-4 accent-[#FF7043]" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} />
+                <span className="font-body-sm text-body-sm">I have read this complaint and it is accurate. I understand I am the one filing it.</span>
+              </label>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                <button
+                  id="copy-complaint"
+                  type="button"
+                  disabled={!canSend}
+                  onClick={copyAll}
+                  className={`min-h-[48px] rounded-lg font-label-md text-label-md font-semibold flex items-center justify-center gap-2 shadow-md disabled:opacity-40 disabled:cursor-not-allowed ${t.accentBg} ${t.focus}`}
+                >
+                  <span className="material-symbols-outlined text-[20px]" aria-hidden="true">content_copy</span>
+                  Copy complaint
+                </button>
+                <a
+                  id="open-portal"
+                  href={canSend ? NCH_URL : undefined}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-disabled={!canSend}
+                  onClick={(e) => {
+                    if (!canSend) e.preventDefault();
+                  }}
+                  className={`min-h-[48px] rounded-lg border font-label-md text-label-md font-semibold flex items-center justify-center gap-2 ${t.secondaryBtn} ${!canSend ? 'opacity-40 cursor-not-allowed' : ''} ${t.focus}`}
+                >
+                  <span className="material-symbols-outlined text-[20px]" aria-hidden="true">open_in_new</span>
+                  Open consumerhelpline.gov.in
+                </a>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <a href="tel:1915" className={`inline-flex items-center gap-1.5 min-h-[40px] px-3 rounded-lg border font-label-md text-label-md ${t.secondaryBtn} ${t.focus}`}>
+                  <span className="material-symbols-outlined text-[18px]" aria-hidden="true">call</span>
+                  Call 1915 (toll-free)
+                </a>
+                <button type="button" onClick={onOpenHelpline} className={`inline-flex items-center gap-1.5 min-h-[40px] px-3 rounded-lg border font-label-md text-label-md ${t.secondaryBtn} ${t.focus}`}>
+                  <span className="material-symbols-outlined text-[18px]" aria-hidden="true">support_agent</span>
+                  Other ways to file
+                </button>
+              </div>
+            </>
+          ) : (
+            <p className={`font-body-sm text-body-sm ${t.muted}`}>Press “Draft complaint” to write it from your findings.</p>
+          )}
         </div>
       </div>
 
-      {/* Statutory Authority Info */}
-      <div
-        className={`p-3.5 rounded-xl border flex items-start gap-2.5 ${
-          isDark
-            ? 'bg-[#1B1B21] border-[#33333C] text-[#A8A6A0]'
-            : 'bg-[#f5f2fa] border-[#e2bfb6]/60 text-[#5a413a]'
-        }`}
-      >
-        <span
-          className={`material-symbols-outlined text-[20px] shrink-0 mt-0.5 ${
-            isDark ? 'text-[#FF7043]' : 'text-[#ae2b00]'
-          }`}
-        >
-          balance
-        </span>
-        <div className="flex flex-col gap-0.5">
-          <span
-            className={`font-label-md text-label-md font-bold ${
-              isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-            }`}
-          >
-            Statutory Penalties Under Section 21
-          </span>
-          <p className="font-body-sm text-body-sm leading-relaxed">
-            The Central Consumer Protection Authority may impose a fine of up to ₹10,00,000
-            for false or misleading practice. For subsequent infractions, the penalty
-            extends up to ₹50,00,000 along with cancellation of e-commerce registration.
-          </p>
-        </div>
-      </div>
-
-      {/* Toast */}
-      {toastMessage && (
-        <div
-          className={`fixed bottom-24 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg shadow-xl flex items-center gap-2 z-50 text-sm font-medium transition-all ${
-            isDark
-              ? 'bg-[#23232B] text-[#F1EFE9] border border-[#33333C]'
-              : 'bg-[#1b1b20] text-white'
-          }`}
-        >
-          <span className="material-symbols-outlined text-[18px] text-[#2DD4BF]">
-            check_circle
-          </span>
-          <span>{toastMessage}</span>
+      {toast && (
+        <div role="status" className={`fixed bottom-24 lg:bottom-8 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-xl border font-label-md text-label-md ${t.isDark ? 'bg-[#23232B] border-[#33333C] text-[#F1EFE9]' : 'bg-white border-[#d9d6ce] text-[#1b1b20]'}`}>
+          {toast}
         </div>
       )}
     </div>

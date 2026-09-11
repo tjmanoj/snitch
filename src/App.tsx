@@ -1,149 +1,224 @@
-import React, { useState, useEffect } from 'react';
-import { ScreenTab, ThemeMode, AuditDocket } from './types';
-import { TEST_DOCKETS } from './data/dockets';
-import { Header } from './components/Header';
-import { BottomNav } from './components/BottomNav';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import type { AnalysisStatus, AuditResult, ScreenTab, ThemeMode } from './types';
+import { Header, tabLabel } from './components/Header';
+import { BottomNav, Sidebar } from './components/BottomNav';
 import { ScanScreen } from './components/ScanScreen';
 import { AnalysisScreen } from './components/AnalysisScreen';
 import { ShareDossierScreen } from './components/ShareDossierScreen';
-import { GrievanceScreen } from './components/GrievanceScreen';
+import { GrievanceScreen, type GrievanceDraft } from './components/GrievanceScreen';
 import { PatternsScreen } from './components/PatternsScreen';
 import { HelplineModal } from './components/HelplineModal';
+import { analyzeImage, ApiError, checkHealth, type HealthResponse } from './lib/api';
+import { fetchImageAsDataUrl, readFileAsDataUrl } from './lib/image';
+import { loadRecent, removeRecent } from './lib/storage';
+import { tokens } from './lib/theme';
+
+const THEME_KEY = 'snitch_theme';
+
+function initialTheme(): ThemeMode {
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved === 'light' || saved === 'dark') return saved;
+  } catch {
+    /* ignore */
+  }
+  // First visit: follow the system preference.
+  if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: light)').matches) return 'light';
+  return 'dark';
+}
 
 export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<ScreenTab>('scan');
-  const [theme, setTheme] = useState<ThemeMode>(() => {
-    const saved = localStorage.getItem('snitch_theme');
-    return saved === 'light' ? 'light' : 'dark';
-  });
+  const [theme, setTheme] = useState<ThemeMode>(initialTheme);
+  const t = tokens(theme);
 
-  const [activeDocket, setActiveDocket] = useState<AuditDocket>(TEST_DOCKETS[0]);
-  const [customImage, setCustomImage] = useState<string | undefined>(undefined);
-  const [isScanning, setIsScanning] = useState(false);
+  // ---- live analysis state (nothing pre-loaded) ----
+  const [status, setStatus] = useState<AnalysisStatus>('idle');
+  const [statusLabel, setStatusLabel] = useState('');
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [lastSource, setLastSource] = useState<File | string | null>(null);
+  const [result, setResult] = useState<AuditResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [recent, setRecent] = useState<AuditResult[]>(() => loadRecent());
+  const [draft, setDraft] = useState<GrievanceDraft | null>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
   const [isHelplineOpen, setIsHelplineOpen] = useState(false);
+  const runRef = useRef(0);
 
   useEffect(() => {
-    localStorage.setItem('snitch_theme', theme);
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      /* ignore */
     }
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    document.documentElement.style.colorScheme = theme;
   }, [theme]);
 
-  const toggleTheme = () => {
-    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
-  };
+  useEffect(() => {
+    checkHealth().then(setHealth);
+  }, []);
 
-  const handleStartAudit = (docket: AuditDocket, uploadedImg?: string) => {
-    setActiveDocket(docket);
-    setCustomImage(uploadedImg);
-    setIsScanning(true);
-    setCurrentTab('analysis');
+  const go = useCallback((tab: ScreenTab) => {
+    setCurrentTab(tab);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
+  /** Run a live analysis on a File or an image URL/data URL. */
+  const runAnalysis = useCallback(
+    async (src: File | string, label: string, force = false) => {
+      const run = ++runRef.current;
+      setLastSource(src);
+      setError(null);
+      setStatus('analyzing');
+      setStatusLabel(`Preparing ${label}…`);
+      setResult(null);
+      setDraft(null);
+      go('analysis');
+
+      try {
+        // Show the preview as early as possible.
+        let dataUrl: string;
+        if (typeof src === 'string') {
+          dataUrl = src.startsWith('data:') ? src : await fetchImageAsDataUrl(src);
+        } else {
+          dataUrl = await readFileAsDataUrl(src);
+        }
+        if (run !== runRef.current) return;
+        setPreviewImage(dataUrl);
+
+        const res = await analyzeImage(dataUrl, {
+          force,
+          onStatus: (l) => run === runRef.current && setStatusLabel(l),
+        });
+        if (run !== runRef.current) return;
+        setResult(res);
+        setStatus('done');
+        setRecent(loadRecent());
+      } catch (err: any) {
+        if (run !== runRef.current) return;
+        const msg =
+          err instanceof ApiError
+            ? err.status === 500 && /GEMINI_API_KEY/i.test(err.message)
+              ? 'The server has no Gemini API key. Add GEMINI_API_KEY in Vercel → Settings → Environment Variables (or in a local .env) and redeploy.'
+              : err.message + (err.detail ? ` (${err.detail})` : '')
+            : err?.message || 'Something went wrong.';
+        setError(msg);
+        setStatus('error');
+      }
+    },
+    [go],
+  );
+
+  const cancelAnalysis = () => {
+    runRef.current++;
+    setStatus(result ? 'done' : 'idle');
+    setStatusLabel('');
+    go('scan');
   };
 
-  const handleAuditPattern = (patternId: string) => {
-    if (patternId.includes('urgency')) {
-      handleStartAudit(TEST_DOCKETS[0]);
-    } else if (patternId.includes('basket') || patternId.includes('drip') || patternId.includes('interference')) {
-      handleStartAudit(TEST_DOCKETS[1]);
-    } else {
-      handleStartAudit(TEST_DOCKETS[2]);
-    }
+  const openRecent = (r: AuditResult) => {
+    runRef.current++;
+    setResult({ ...r, cached: true });
+    setPreviewImage(r.imageDataUrl);
+    setLastSource(r.imageDataUrl);
+    setError(null);
+    setStatus('done');
+    setDraft(null);
+    go('analysis');
   };
+
+  const handleRemoveRecent = (id: string) => {
+    removeRecent(id);
+    setRecent(loadRecent());
+  };
+
+  const apiLabel = health ? (health.configured ? `Live analysis · ${health.model}` : 'Server missing GEMINI_API_KEY') : 'Checking server…';
+  const findingsCount = status === 'done' && result ? result.findings.length : 0;
 
   return (
-    <div
-      className={`min-h-screen flex flex-col font-sans transition-colors duration-200 ${
-        theme === 'dark'
-          ? 'bg-[#15151A] text-[#F1EFE9]'
-          : 'bg-[#fbf8ff] text-[#1b1b20]'
-      }`}
-    >
-      {/* Top Application Bar */}
-      <Header
+    <div className={`min-h-dvh font-sans transition-colors duration-200 motion-reduce:transition-none lg:flex ${t.page}`}>
+      <Sidebar
         currentTab={currentTab}
         theme={theme}
-        onToggleTheme={toggleTheme}
-        onEmergencyClick={() => setIsHelplineOpen(true)}
+        onSelectTab={go}
+        findingsCount={findingsCount}
+        onToggleTheme={() => setTheme((p) => (p === 'dark' ? 'light' : 'dark'))}
+        onHelplineClick={() => setIsHelplineOpen(true)}
+        apiLabel={apiLabel}
       />
 
-      {/* Main Responsive Centered Screen Container */}
-      <main className="flex-1 w-full max-w-lg mx-auto px-4 pt-20 pb-20">
-        {currentTab === 'scan' && (
-          <ScanScreen theme={theme} onStartAudit={handleStartAudit} />
-        )}
+      <div className="flex-1 min-w-0 flex flex-col">
+        <Header currentTab={currentTab} theme={theme} onToggleTheme={() => setTheme((p) => (p === 'dark' ? 'light' : 'dark'))} onHelplineClick={() => setIsHelplineOpen(true)} />
 
-        {currentTab === 'analysis' && (
-          <AnalysisScreen
-            theme={theme}
-            docket={activeDocket}
-            customImage={customImage}
-            isScanning={isScanning}
-            onCancelScan={() => {
-              setIsScanning(false);
-              setCurrentTab('scan');
-            }}
-            onCompleteScan={() => {
-              setIsScanning(false);
-            }}
-            onGoToGrievance={() => {
-              setCurrentTab('grievance');
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
-            onGoToShareDossier={() => {
-              setCurrentTab('share-dossier');
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
-          />
-        )}
+        {/* Desktop page title row */}
+        <div className={`hidden lg:flex items-center justify-between px-8 pt-6 max-w-6xl w-full mx-auto`}>
+          <span className={`font-citation-badge text-citation-badge uppercase tracking-wider font-semibold ${t.dim}`}>{tabLabel(currentTab)}</span>
+          <span className={`px-2 py-[3px] rounded border font-citation-badge text-citation-badge uppercase font-semibold ${health ? (health.configured ? t.tealSoft : t.amberSoft) : t.neutralSoft}`}>{apiLabel}</span>
+        </div>
 
-        {currentTab === 'share-dossier' && (
-          <ShareDossierScreen
-            theme={theme}
-            docket={activeDocket}
-            customImage={customImage}
-            onBackToAnalysis={() => setCurrentTab('analysis')}
-            onGoToGrievance={() => {
-              setCurrentTab('grievance');
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
-          />
-        )}
+        <main id="main" className="flex-1 w-full max-w-lg md:max-w-2xl lg:max-w-6xl mx-auto px-4 md:px-6 lg:px-8 pt-20 lg:pt-6 pb-24 lg:pb-10 landscape:pt-[4.5rem]">
+          {currentTab === 'scan' && (
+            <ScanScreen
+              theme={theme}
+              status={status}
+              statusLabel={statusLabel}
+              error={error}
+              recent={recent}
+              health={health}
+              onAnalyze={(src, label) => runAnalysis(src, label)}
+              onOpenRecent={openRecent}
+              onRemoveRecent={handleRemoveRecent}
+              onDismissError={() => {
+                setError(null);
+                setStatus(result ? 'done' : 'idle');
+              }}
+            />
+          )}
 
-        {currentTab === 'grievance' && (
-          <GrievanceScreen
-            theme={theme}
-            docket={activeDocket}
-            onGoToAnalysis={() => setCurrentTab('analysis')}
-          />
-        )}
+          {currentTab === 'analysis' && (
+            <AnalysisScreen
+              theme={theme}
+              status={status}
+              statusLabel={statusLabel}
+              previewImage={previewImage}
+              result={result}
+              error={error}
+              onCancel={cancelAnalysis}
+              onGoToScan={() => go('scan')}
+              onReanalyze={() => lastSource && runAnalysis(lastSource, 'screenshot', true)}
+              onGoToGrievance={() => go('grievance')}
+              onGoToShare={() => go('share-dossier')}
+            />
+          )}
 
-        {currentTab === '13-patterns' && (
-          <PatternsScreen
-            theme={theme}
-            onAuditPattern={handleAuditPattern}
-          />
-        )}
-      </main>
+          {currentTab === 'share-dossier' && (
+            <ShareDossierScreen theme={theme} result={status === 'done' ? result : null} onBackToAnalysis={() => go('analysis')} onGoToGrievance={() => go('grievance')} onGoToScan={() => go('scan')} />
+          )}
 
-      {/* Persistent Mobile Bottom Navigation Bar */}
-      <BottomNav
-        currentTab={currentTab}
-        theme={theme}
-        onSelectTab={(tab) => {
-          setCurrentTab(tab);
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        }}
-      />
+          {currentTab === 'grievance' && (
+            <GrievanceScreen
+              theme={theme}
+              result={status === 'done' ? result : null}
+              draft={draft}
+              onDraftChange={setDraft}
+              onGoToAnalysis={() => go('analysis')}
+              onGoToScan={() => go('scan')}
+              onOpenHelpline={() => setIsHelplineOpen(true)}
+            />
+          )}
 
-      {/* Emergency Helpline Modal */}
-      <HelplineModal
-        isOpen={isHelplineOpen}
-        theme={theme}
-        onClose={() => setIsHelplineOpen(false)}
-      />
+          {currentTab === '13-patterns' && <PatternsScreen theme={theme} onAuditPattern={() => go('scan')} />}
+
+          <footer className={`mt-8 pt-4 border-t font-citation-code text-[11px] leading-snug ${t.border} ${t.dim}`}>
+            Snitch helps you describe what you saw in the words the regulator already published. It is not legal advice and it never files anything on your behalf.
+          </footer>
+        </main>
+
+        <BottomNav currentTab={currentTab} theme={theme} onSelectTab={go} findingsCount={findingsCount} />
+      </div>
+
+      <HelplineModal isOpen={isHelplineOpen} theme={theme} onClose={() => setIsHelplineOpen(false)} />
     </div>
   );
 };

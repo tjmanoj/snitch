@@ -1,1404 +1,317 @@
-import React, { useState, useEffect } from 'react';
-import { ThemeMode, AuditDocket } from '../types';
+import React, { useEffect, useMemo, useState } from 'react';
+import type { AnalysisStatus, AuditResult, Finding, ThemeMode } from '../types';
+import { confidenceClasses, confidenceLabel, tokens } from '../lib/theme';
 
 interface AnalysisScreenProps {
   theme: ThemeMode;
-  docket: AuditDocket;
-  customImage?: string;
-  isScanning: boolean;
-  onCancelScan: () => void;
-  onCompleteScan: () => void;
+  status: AnalysisStatus;
+  statusLabel: string;
+  previewImage: string | null;
+  result: AuditResult | null;
+  error: string | null;
+  onCancel: () => void;
+  onGoToScan: () => void;
+  onReanalyze: () => void;
   onGoToGrievance: () => void;
-  onGoToShareDossier: () => void;
+  onGoToShare: () => void;
 }
+
+const fmtTime = (iso: string) =>
+  new Date(iso).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 export const AnalysisScreen: React.FC<AnalysisScreenProps> = ({
   theme,
-  docket,
-  customImage,
-  isScanning,
-  onCancelScan,
-  onCompleteScan,
+  status,
+  statusLabel,
+  previewImage,
+  result,
+  error,
+  onCancel,
+  onGoToScan,
+  onReanalyze,
   onGoToGrievance,
-  onGoToShareDossier,
+  onGoToShare,
 }) => {
-  const isDark = theme === 'dark';
-  const [timerSeconds, setTimerSeconds] = useState(299);
-  const [beamPos, setBeamPos] = useState(0);
-  const [beamDir, setBeamDir] = useState(1);
-  const [selectedPinId, setSelectedPinId] = useState<number | null>(null);
-  const [reportedIds, setReportedIds] = useState<number[]>([]);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const t = tokens(theme);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [disputed, setDisputed] = useState<number[]>([]);
+  const [elapsed, setElapsed] = useState(0);
 
-  // Animate laser scanning beam during scanning state
+  // Elapsed-seconds counter while the real request is in flight.
   useEffect(() => {
-    if (!isScanning) return;
-    const interval = setInterval(() => {
-      setBeamPos((prev) => {
-        if (prev >= 95) {
-          setBeamDir(-1);
-          return 95;
-        } else if (prev <= 5) {
-          setBeamDir(1);
-          return 5;
-        }
-        return prev + beamDir * 2.5;
-      });
-    }, 30);
-    return () => clearInterval(interval);
-  }, [isScanning, beamDir]);
+    if (status !== 'analyzing') {
+      setElapsed(0);
+      return;
+    }
+    const start = Date.now();
+    const id = setInterval(() => setElapsed(Math.round((Date.now() - start) / 1000)), 500);
+    return () => clearInterval(id);
+  }, [status]);
 
-  // Countdown timer in scanned mockup
   useEffect(() => {
-    const timer = setInterval(() => {
-      setTimerSeconds((prev) => (prev > 0 ? prev - 1 : 299));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
+    setSelectedId(null);
+    setDisputed([]);
+  }, [result?.id]);
 
-  // Auto-finish scan after 3 seconds if active
-  useEffect(() => {
-    if (isScanning) {
-      const finishTimeout = setTimeout(() => {
-        onCompleteScan();
-      }, 3200);
-      return () => clearTimeout(finishTimeout);
-    }
-  }, [isScanning, onCompleteScan]);
+  const counts = useMemo(() => {
+    const f = result?.findings ?? [];
+    return {
+      high: f.filter((x) => x.confidence === 'high').length,
+      medium: f.filter((x) => x.confidence === 'medium').length,
+      low: f.filter((x) => x.confidence === 'low').length,
+    };
+  }, [result]);
 
-  const formatTimer = (secs: number) => {
-    const m = String(Math.floor(secs / 60)).padStart(2, '0');
-    const s = String(secs % 60).padStart(2, '0');
-    return `${m}:${s}`;
+  const focusFinding = (id: number) => {
+    setSelectedId(id);
+    document.getElementById(`finding-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
-  const handlePinClick = (pinId: number) => {
-    setSelectedPinId(pinId);
-    const element = document.getElementById(`finding-${pinId}`);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-  };
-
-  const handleReportFinding = (id: number) => {
-    if (!reportedIds.includes(id)) {
-      setReportedIds([...reportedIds, id]);
-      showToast('Finding reported to CCPA review board');
-    }
-  };
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage(null);
-    }, 2400);
-  };
-
-  /* ----------------------------------------------------
-     STATE 1: SCANNING IN PROGRESS
-     ---------------------------------------------------- */
-  if (isScanning) {
+  /* ------------------------------------------------------------------ analysing */
+  if (status === 'analyzing') {
     return (
-      <div className="flex flex-col w-full pb-10">
-        {/* Status Chip */}
-        <div className="flex flex-col gap-2 mb-3">
-          <div
-            className={`inline-flex items-center self-start gap-1.5 px-3 py-1 rounded-full shadow-sm ${
-              isDark
-                ? 'bg-[#FF7043]/15 border border-[#FF7043]/30 text-[#FF7043]'
-                : 'bg-[#ffdad6] text-[#ae2b00] border border-[#d1431a]/30'
-            }`}
-          >
-            <span
-              className={`w-2 h-2 rounded-full animate-ping ${
-                isDark ? 'bg-[#FF7043]' : 'bg-[#ae2b00]'
-              }`}
-            />
-            <span className="font-citation-badge text-citation-badge uppercase tracking-wider font-semibold">
-              ANALYSIS IN PROGRESS • CCPA AUDIT
-            </span>
+      <div className="flex flex-col w-full pb-6 gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-8 lg:items-start">
+        <div className="flex flex-col gap-3">
+          <div className={`inline-flex items-center self-start gap-1.5 px-3 py-1 rounded-full shadow-sm border ${t.accentSoft}`} role="status" aria-live="polite">
+            <span className={`w-2 h-2 rounded-full animate-ping motion-reduce:animate-none ${t.isDark ? 'bg-[#FF7043]' : 'bg-[#ae2b00]'}`} />
+            <span className="font-citation-badge text-citation-badge uppercase tracking-wider font-semibold">Analysis in progress · live</span>
           </div>
-
-          <h2
-            className={`font-display-lg-mobile text-display-lg-mobile tracking-tight ${
-              isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-            }`}
-          >
-            Reading the screen… matching against 13 patterns
-          </h2>
-
-          <p
-            className={`font-body-sm text-body-sm leading-relaxed ${
-              isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-            }`}
-          >
-            Inspecting active DOM layers, pre-checked add-ons, and artificial scarcity
-            timers against CCPA guidelines.
+          <h2 className={`font-display-lg-mobile text-display-lg-mobile md:font-display-lg tracking-tight ${t.text}`}>{statusLabel || 'Reading the screen…'}</h2>
+          <p className={`font-body-md text-body-md leading-relaxed max-w-prose ${t.muted}`}>
+            The model is looking at your screenshot and comparing what it sees against the 13 patterns in Annexure 1 of the 2023 Guidelines. This usually takes 5–20 seconds.
           </p>
-        </div>
-
-        {/* Audit Feed Box with Moving Laser */}
-        <div
-          className={`relative w-full rounded-xl p-2.5 shadow-xl overflow-hidden mb-3 border ${
-            isDark
-              ? 'bg-[#1B1B21] border-[#33333C]'
-              : 'bg-[#eae7ee] border-[#e2bfb6]'
-          }`}
-        >
-          <div
-            className={`absolute top-2 left-2 font-citation-code text-[11px] select-none tracking-widest uppercase ${
-              isDark ? 'text-[#787672]' : 'text-[#5d5c57]'
-            }`}
-          >
-            [+] CORNER_TL // AUDIT_FEED
-          </div>
-          <div
-            className={`absolute top-2 right-2 font-citation-code text-[11px] select-none tracking-widest uppercase ${
-              isDark ? 'text-[#787672]' : 'text-[#5d5c57]'
-            }`}
-          >
-            [+] CORNER_TR
-          </div>
-
-          {/* Simulated Cart Capture / Live Mockup */}
-          <div
-            className={`relative w-full rounded-lg overflow-hidden shadow-inner p-3 mt-4 border ${
-              isDark
-                ? 'bg-[#121216] border-[#33333C]'
-                : 'bg-white border-[#e2bfb6]'
-            }`}
-          >
-            {/* Store header */}
-            <div
-              className={`flex items-center justify-between pb-1 mb-2 px-2 py-1 rounded border ${
-                isDark
-                  ? 'bg-[#1B1B21] border-[#33333C]/60 text-[#F1EFE9]'
-                  : 'bg-[#f5f2fa] border-[#e2bfb6]/60 text-[#1b1b20]'
-              }`}
-            >
-              <div className="flex items-center gap-1.5">
-                <span
-                  className={`material-symbols-outlined text-[16px] ${
-                    isDark ? 'text-[#FF7043]' : 'text-[#ae2b00]'
-                  }`}
-                >
-                  bolt
-                </span>
-                <span className="font-headline-sm text-[13px] font-bold">
-                  {docket.name.includes('Zepto') || docket.id === 'zepto-cart'
-                    ? 'Zepto Delivery • 10 Mins'
-                    : docket.name}
-                </span>
-              </div>
-              <span
-                className={`font-citation-code text-[11px] font-semibold px-1.5 py-0.5 rounded border ${
-                  isDark
-                    ? 'bg-[#26A69A]/15 border-[#26A69A]/30 text-[#26A69A]'
-                    : 'bg-[#9cefdf] text-[#006b5e]'
-                }`}
-              >
-                LIVE ORDER
-              </span>
-            </div>
-
-            {/* False Urgency Clock Box */}
-            <div
-              className={`relative overflow-hidden rounded-lg p-2 mb-2 flex items-center justify-between border ${
-                isDark
-                  ? 'bg-[#FF7043]/10 border-[#FF7043]/30 text-[#FF7043]'
-                  : 'bg-[#ffdad6] border-[#d1431a]/30 text-[#ae2b00]'
-              }`}
-            >
-              <div className="flex items-center gap-1.5 min-w-0 pr-1">
-                <span className="material-symbols-outlined text-[18px]">
-                  alarm_on
-                </span>
-                <span className="font-label-md text-label-md font-bold truncate">
-                  ⚡ High Demand: Only 2 checkout slots left! Reserve within
-                </span>
-              </div>
-              <span
-                className={`font-citation-code text-citation-code px-2 py-0.5 rounded font-bold border shrink-0 ${
-                  isDark
-                    ? 'bg-[#1B1B21] border-[#FF7043]/40 text-[#FF7043]'
-                    : 'bg-white border-[#d1431a] text-[#ae2b00]'
-                }`}
-              >
-                {formatTimer(timerSeconds)}
-              </span>
-            </div>
-
-            {/* Cart Items */}
-            <div className="flex flex-col gap-1 mb-2">
-              <div
-                className={`flex justify-between items-center px-2 py-1.5 rounded border ${
-                  isDark
-                    ? 'bg-[#1B1B21] border-[#33333C]/60 text-[#F1EFE9]'
-                    : 'bg-[#f5f2fa] border-[#e2bfb6]/60 text-[#1b1b20]'
-                }`}
-              >
-                <div className="flex items-center gap-1.5">
-                  <span
-                    className={`material-symbols-outlined text-[16px] ${
-                      isDark ? 'text-[#787672]' : 'text-[#5d5c57]'
-                    }`}
-                  >
-                    shopping_bag
-                  </span>
-                  <span className="font-body-sm text-body-sm font-medium">
-                    Aashirvaad Atta (5kg)
-                  </span>
-                </div>
-                <span className="font-citation-code text-citation-code font-bold">
-                  ₹245
-                </span>
-              </div>
-
-              <div
-                className={`flex justify-between items-center px-2 py-1.5 rounded border ${
-                  isDark
-                    ? 'bg-[#1B1B21] border-[#33333C]/60 text-[#F1EFE9]'
-                    : 'bg-[#f5f2fa] border-[#e2bfb6]/60 text-[#1b1b20]'
-                }`}
-              >
-                <div className="flex items-center gap-1.5">
-                  <span
-                    className={`material-symbols-outlined text-[16px] ${
-                      isDark ? 'text-[#787672]' : 'text-[#5d5c57]'
-                    }`}
-                  >
-                    egg
-                  </span>
-                  <span className="font-body-sm text-body-sm font-medium">
-                    Amul Taaza Milk (500ml)
-                  </span>
-                </div>
-                <span className="font-citation-code text-citation-code font-bold">
-                  ₹54
-                </span>
-              </div>
-
-              {/* Drip fees */}
-              <div
-                className={`flex justify-between items-center px-2 py-1 ${
-                  isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-                }`}
-              >
-                <span className="font-body-sm text-body-sm">
-                  Handling fee (Surge prep)
-                </span>
-                <span className="font-citation-code text-citation-code">₹9</span>
-              </div>
-
-              <div
-                className={`flex justify-between items-center px-2 py-1 ${
-                  isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-                }`}
-              >
-                <span className="font-body-sm text-body-sm">
-                  Surge fee (Peak demand slot)
-                </span>
-                <span className="font-citation-code text-citation-code">₹25</span>
-              </div>
-            </div>
-
-            {/* Pre-ticked Addon */}
-            <div
-              className={`flex items-center justify-between p-2 rounded-lg border ${
-                isDark
-                  ? 'bg-[#1B1B21] border-[#33333C]/60'
-                  : 'bg-[#f0edf4] border-[#e2bfb6]'
-              }`}
-            >
-              <div className="flex items-center gap-1.5">
-                <div
-                  className={`w-4 h-4 rounded flex items-center justify-center font-bold ${
-                    isDark
-                      ? 'bg-[#FF7043] text-[#15151A]'
-                      : 'bg-[#ae2b00] text-white'
-                  }`}
-                >
-                  <span className="material-symbols-outlined text-[13px] leading-none">
-                    check
-                  </span>
-                </div>
-                <span
-                  className={`font-body-sm text-body-sm font-medium ${
-                    isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-                  }`}
-                >
-                  Add ₹19 for Tip & Green Packaging
-                </span>
-              </div>
-              <span
-                className={`font-citation-badge text-citation-badge px-1.5 py-0.5 rounded border ${
-                  isDark
-                    ? 'bg-[#FF7043]/15 text-[#FF7043] border-[#FF7043]/30'
-                    : 'bg-[#ffdad6] text-[#ae2b00] border-[#d1431a]/30'
-                }`}
-              >
-                PRE-TICKED
-              </span>
-            </div>
-
-            {/* Scanning Beam Bar */}
-            <div
-              className={`absolute inset-x-0 h-[2px] opacity-95 pointer-events-none transition-all duration-75 shadow-lg ${
-                isDark
-                  ? 'bg-gradient-to-r from-transparent via-[#FF7043] to-transparent shadow-[#FF7043]'
-                  : 'bg-gradient-to-r from-transparent via-[#ae2b00] to-transparent shadow-[#ae2b00]'
-              }`}
-              style={{ top: `${beamPos}%` }}
-            />
-          </div>
-
-          {/* Bottom Telemetry */}
-          <div className="flex items-center justify-between mt-2 px-1">
-            <div
-              className={`font-citation-code text-[11px] select-none tracking-widest uppercase ${
-                isDark ? 'text-[#787672]' : 'text-[#5d5c57]'
-              }`}
-            >
-              [+] CORNER_BL
-            </div>
-            <div className="flex items-center gap-1">
-              <span
-                className={`w-1.5 h-1.5 rounded-full animate-ping ${
-                  isDark ? 'bg-[#26A69A]' : 'bg-[#006b5e]'
-                }`}
-              />
-              <span
-                className={`font-citation-code text-[11px] font-semibold uppercase ${
-                  isDark ? 'text-[#26A69A]' : 'text-[#006b5e]'
-                }`}
-              >
-                OCR Engine Calibrated
-              </span>
-            </div>
-            <div
-              className={`font-citation-code text-[11px] select-none tracking-widest uppercase ${
-                isDark ? 'text-[#787672]' : 'text-[#5d5c57]'
-              }`}
-            >
-              [+] CORNER_BR
-            </div>
-          </div>
-        </div>
-
-        {/* Steps Progress List */}
-        <div className="flex flex-col gap-1.5 mb-3">
-          {/* Step 1 */}
-          <div
-            className={`flex items-center justify-between px-3.5 py-2.5 rounded-lg border ${
-              isDark
-                ? 'bg-[#1B1B21] border-[#33333C]'
-                : 'bg-[#f5f2fa] border-[#e2bfb6]'
-            }`}
-          >
-            <div className="flex items-center gap-3">
-              <div
-                className={`w-7 h-7 rounded-full flex items-center justify-center border ${
-                  isDark
-                    ? 'bg-[#26A69A]/15 border-[#26A69A]/30 text-[#26A69A]'
-                    : 'bg-[#9cefdf] text-[#006b5e] border-[#006b5e]/30'
-                }`}
-              >
-                <span className="material-symbols-outlined text-[18px]">
-                  check_circle
-                </span>
-              </div>
-              <div className="flex flex-col">
-                <span
-                  className={`font-headline-sm text-headline-sm ${
-                    isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-                  }`}
-                >
-                  Step 1: Hierarchy & Optical Analysis
-                </span>
-                <span
-                  className={`font-body-sm text-body-sm ${
-                    isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-                  }`}
-                >
-                  Parsed 4 price nodes & 2 interactive checks
-                </span>
-              </div>
-            </div>
-            <span
-              className={`font-citation-badge text-citation-badge px-2 py-0.5 rounded font-bold border ${
-                isDark
-                  ? 'bg-[#26A69A]/15 border-[#26A69A]/30 text-[#26A69A]'
-                  : 'bg-[#9cefdf] text-[#006b5e] border-[#006b5e]/30'
-              }`}
-            >
-              COMPLETED
-            </span>
-          </div>
-
-          {/* Step 2 */}
-          <div
-            className={`flex items-center justify-between px-3.5 py-2.5 rounded-lg border shadow-sm ${
-              isDark
-                ? 'bg-[#1B1B21] border-[#FF7043]/40'
-                : 'bg-[#f0edf4] border-[#ae2b00]/40'
-            }`}
-          >
-            <div className="flex items-center gap-3">
-              <div
-                className={`w-7 h-7 rounded-full flex items-center justify-center border animate-pulse ${
-                  isDark
-                    ? 'bg-[#FF7043]/15 border-[#FF7043]/30 text-[#FF7043]'
-                    : 'bg-[#ffdad6] border-[#d1431a]/30 text-[#ae2b00]'
-                }`}
-              >
-                <span className="material-symbols-outlined text-[18px]">
-                  search_insights
-                </span>
-              </div>
-              <div className="flex flex-col">
-                <span
-                  className={`font-headline-sm text-headline-sm ${
-                    isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-                  }`}
-                >
-                  Step 2: CCPA 2023 Dark Patterns Match
-                </span>
-                <span
-                  className={`font-body-sm text-body-sm font-medium ${
-                    isDark ? 'text-[#FF7043]' : 'text-[#ae2b00]'
-                  }`}
-                >
-                  Flagging False Urgency & Basket Sneaking…
-                </span>
-              </div>
-            </div>
-            <span
-              className={`font-citation-badge text-citation-badge px-2 py-0.5 rounded font-bold animate-pulse ${
-                isDark
-                  ? 'bg-[#FF7043] text-[#15151A]'
-                  : 'bg-[#ae2b00] text-white'
-              }`}
-            >
-              IN PROGRESS
-            </span>
-          </div>
-
-          {/* Step 3 */}
-          <div
-            className={`flex items-center justify-between px-3.5 py-2.5 rounded-lg border opacity-60 ${
-              isDark
-                ? 'bg-[#1B1B21] border-[#33333C]'
-                : 'bg-[#f5f2fa] border-[#e2bfb6]'
-            }`}
-          >
-            <div className="flex items-center gap-3">
-              <div
-                className={`w-7 h-7 rounded-full flex items-center justify-center border ${
-                  isDark
-                    ? 'bg-[#23232B] border-[#33333C] text-[#787672]'
-                    : 'bg-[#e4e1e8] border-[#e2bfb6] text-[#5d5c57]'
-                }`}
-              >
-                <span className="material-symbols-outlined text-[18px]">
-                  radio_button_unchecked
-                </span>
-              </div>
-              <div className="flex flex-col">
-                <span
-                  className={`font-headline-sm text-headline-sm ${
-                    isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-                  }`}
-                >
-                  Step 3: Annexure 1 Clause Correlation
-                </span>
-                <span
-                  className={`font-body-sm text-body-sm ${
-                    isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-                  }`}
-                >
-                  Statutory precedent & penalty schedule mapping
-                </span>
-              </div>
-            </div>
-            <span
-              className={`font-citation-badge text-citation-badge px-2 py-0.5 rounded font-bold ${
-                isDark
-                  ? 'bg-[#23232B] border border-[#33333C] text-[#787672]'
-                  : 'bg-[#e4e1e8] text-[#5d5c57]'
-              }`}
-            >
-              QUEUED
-            </span>
-          </div>
-        </div>
-
-        {/* Guideline Matrix Progress Banner */}
-        <div
-          className={`flex items-center justify-between p-3 rounded-lg border mb-4 ${
-            isDark
-              ? 'bg-[#1B1B21] border-[#33333C]'
-              : 'bg-[#e4e1e8] border-[#e2bfb6]'
-          }`}
-        >
-          <div className="flex items-center gap-1.5">
-            <span
-              className={`material-symbols-outlined text-[20px] ${
-                isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-              }`}
-            >
-              fact_check
-            </span>
-            <span
-              className={`font-label-md text-label-md ${
-                isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-              }`}
-            >
-              Guideline Matrix Progress
-            </span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span
-              className={`font-citation-code text-citation-code font-bold ${
-                isDark ? 'text-[#FF7043]' : 'text-[#ae2b00]'
-              }`}
-            >
-              13 / 13 Guidelines Queried
-            </span>
-            <span
-              className={`w-2 h-2 rounded-full ${
-                isDark ? 'bg-[#FF7043] shadow-[0_0_6px_#FF7043]' : 'bg-[#ae2b00]'
-              }`}
-            />
-          </div>
-        </div>
-
-        {/* Action: Cancel or Instant Skip */}
-        <div className="flex flex-col items-center gap-2">
-          <button
-            type="button"
-            onClick={onCompleteScan}
-            className={`w-full h-11 rounded-lg border font-headline-sm text-headline-sm flex items-center justify-center gap-1.5 transition-colors shadow-sm font-semibold active:scale-[0.99] ${
-              isDark
-                ? 'bg-[#FF7043] hover:bg-[#ff845e] text-[#15151A] border-[#FF7043]'
-                : 'bg-[#ae2b00] hover:bg-[#d1431a] text-white border-[#ae2b00]'
-            }`}
-          >
-            <span className="material-symbols-outlined text-[18px]">
-              fast_forward
-            </span>
-            <span>Skip to Findings</span>
+          <div className={`font-citation-code text-citation-code ${t.dim}`}>{elapsed}s elapsed</div>
+          <button type="button" onClick={onCancel} className={`self-start mt-1 min-h-[44px] px-4 rounded-lg border font-label-md text-label-md font-semibold ${t.secondaryBtn} ${t.focus}`}>
+            Cancel
           </button>
+        </div>
 
-          <button
-            type="button"
-            onClick={onCancelScan}
-            className={`w-full h-10 rounded-lg border font-label-md text-label-md flex items-center justify-center gap-1.5 transition-colors ${
-              isDark
-                ? 'bg-[#1B1B21] hover:bg-[#23232B] border-[#33333C] text-[#A8A6A0]'
-                : 'bg-white hover:bg-[#f5f2fa] border-[#e2bfb6] text-[#5a413a]'
-            }`}
-          >
-            <span className="material-symbols-outlined text-[16px]">close</span>
-            <span>Cancel inspection</span>
-          </button>
-
-          <span
-            className={`font-citation-badge text-citation-badge uppercase tracking-wider ${
-              isDark ? 'text-[#787672]' : 'text-[#8e7069]'
-            }`}
-          >
-            Audit session token #CCPA-2023-DEL-8942
-          </span>
+        <div className={`relative rounded-xl border overflow-hidden shadow-md ${t.card}`}>
+          {previewImage ? (
+            <div className="relative w-full">
+              <img src={previewImage} alt="Screenshot being analysed" className="w-full h-auto max-h-[70dvh] object-contain block" />
+              <div className="scan-beam pointer-events-none absolute inset-x-0 h-16 motion-reduce:hidden" aria-hidden="true" />
+              <div className="pointer-events-none absolute inset-0 bg-[#15151A]/20" aria-hidden="true" />
+            </div>
+          ) : (
+            <div className={`h-64 flex items-center justify-center ${t.dim}`}>Preparing preview…</div>
+          )}
         </div>
       </div>
     );
   }
 
-  /* ----------------------------------------------------
-     STATE 2: COMPLETED AUDIT FINDINGS
-     ---------------------------------------------------- */
+  /* ------------------------------------------------------------------ error */
+  if (status === 'error' && !result) {
+    return (
+      <div className="flex flex-col w-full pb-6 gap-4 max-w-xl">
+        <div className={`inline-flex items-center self-start gap-1.5 px-3 py-1 rounded-full shadow-sm border ${t.amberSoft}`}>
+          <span className="material-symbols-outlined text-[16px]" aria-hidden="true">error</span>
+          <span className="font-citation-badge text-citation-badge uppercase tracking-wider font-semibold">Analysis failed</span>
+        </div>
+        <h2 className={`font-display-lg-mobile text-display-lg-mobile tracking-tight ${t.text}`}>We couldn’t analyse that screenshot.</h2>
+        <p className={`font-body-md text-body-md leading-relaxed break-words ${t.muted}`} role="alert">{error}</p>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={onReanalyze} className={`min-h-[44px] px-4 rounded-lg font-label-md text-label-md font-semibold ${t.accentBg} ${t.focus}`}>Try again</button>
+          <button type="button" onClick={onGoToScan} className={`min-h-[44px] px-4 rounded-lg border font-label-md text-label-md font-semibold ${t.secondaryBtn} ${t.focus}`}>Choose another screenshot</button>
+        </div>
+      </div>
+    );
+  }
+
+  /* ------------------------------------------------------------------ empty */
+  if (!result) {
+    return (
+      <div className="flex flex-col w-full pb-6 gap-4 max-w-xl">
+        <span className={`font-citation-badge text-citation-badge tracking-wider uppercase font-semibold ${t.dim}`}>Analysis</span>
+        <h2 className={`font-display-lg-mobile text-display-lg-mobile tracking-tight ${t.text}`}>Nothing analysed yet.</h2>
+        <p className={`font-body-md text-body-md leading-relaxed ${t.muted}`}>
+          Drop a screenshot on the Scan tab. Every finding on this screen comes from a live reading of your image — nothing is pre-loaded.
+        </p>
+        <button type="button" onClick={onGoToScan} className={`self-start min-h-[44px] px-4 rounded-lg font-label-md text-label-md font-semibold flex items-center gap-2 ${t.accentBg} ${t.focus}`}>
+          <span className="material-symbols-outlined text-[18px]" aria-hidden="true">add_a_photo</span>
+          Go to Scan
+        </button>
+      </div>
+    );
+  }
+
+  /* ------------------------------------------------------------------ results */
+  const findings = result.findings;
+  const none = findings.length === 0;
+
   return (
-    <div className="flex flex-col w-full pb-20">
-      {/* Status & Confidence Ticker */}
-      <div className="flex items-center justify-between py-1 mb-2">
-        <div className="flex items-center gap-1.5">
-          <span
-            className={`inline-block w-2 h-2 rounded-full animate-ping ${
-              isDark ? 'bg-[#FF7043]' : 'bg-[#ae2b00]'
-            }`}
-          />
-          <span
-            className={`font-citation-badge text-citation-badge uppercase tracking-wider ${
-              isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-            }`}
-          >
-            FORENSIC AUDIT RECORD #8492
+    <div className="flex flex-col w-full pb-24 lg:pb-6 gap-4">
+      {/* Header strip */}
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full shadow-sm border font-citation-badge text-citation-badge uppercase tracking-wider font-semibold ${none ? t.tealSoft : t.accentSoft}`}>
+            <span className="material-symbols-outlined text-[14px]" aria-hidden="true">{none ? 'verified' : 'flag'}</span>
+            {none ? 'No dark patterns detected' : `${findings.length} dark pattern${findings.length === 1 ? '' : 's'} found`}
           </span>
+          {result.cached && (
+            <span className={`px-2 py-[3px] rounded border font-citation-badge text-citation-badge uppercase font-semibold ${t.neutralSoft}`} title="Restored from a previous real analysis on this device">
+              From device cache
+            </span>
+          )}
+          <span className={`px-2 py-[3px] rounded border font-citation-badge text-citation-badge uppercase font-semibold ${t.neutralSoft}`}>{result.model}</span>
         </div>
-        <span
-          className={`font-citation-code text-citation-code font-semibold ${
-            isDark ? 'text-[#FF7043]' : 'text-[#ae2b00]'
-          }`}
-        >
-          100% COMPLETE
-        </span>
-      </div>
-
-      {/* Summary Metric Banner */}
-      <div
-        className={`w-full rounded-xl p-3.5 border shadow-lg mb-3 ${
-          isDark
-            ? 'bg-[#1B1B21] border-[#33333C]'
-            : 'bg-white border-[#e2bfb6]/70'
-        }`}
-      >
-        <div className="flex items-start justify-between gap-2 mb-1">
-          <div className="flex flex-col min-w-0">
-            <div className="flex items-center gap-1.5">
-              <span
-                className={`material-symbols-outlined text-[18px] ${
-                  isDark ? 'text-[#FF7043]' : 'text-[#ae2b00]'
-                }`}
-              >
-                verified_user
-              </span>
-              <span
-                className={`font-headline-sm text-headline-sm truncate font-bold ${
-                  isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-                }`}
-              >
-                Audit Findings
-              </span>
-            </div>
-            <span
-              className={`font-body-sm text-body-sm mt-0.5 ${
-                isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-              }`}
-            >
-              Target domain:{' '}
-              <strong
-                className={`font-semibold ${
-                  isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-                }`}
-              >
-                {docket.domain}
-              </strong>
+        <h2 className={`font-headline-lg text-headline-lg md:font-display-lg-mobile tracking-tight ${t.text}`}>
+          {result.platformGuess} <span className={t.dim}>·</span> <span className={t.muted}>{result.screenType}</span>
+        </h2>
+        <p className={`font-body-md text-body-md leading-relaxed max-w-prose ${t.muted}`}>{result.summary}</p>
+        <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 font-citation-code text-citation-code ${t.dim}`}>
+          <span>Analysed {fmtTime(result.analyzedAt)}</span>
+          {!none && (
+            <span>
+              {counts.high} high · {counts.medium} medium · {counts.low} low confidence
             </span>
-          </div>
-
-          <div className="flex flex-col items-end shrink-0">
-            <div
-              className={`px-2.5 py-[3px] rounded-lg shadow-sm flex items-center gap-1 font-bold ${
-                isDark
-                  ? 'bg-[#FF7043] text-[#15151A]'
-                  : 'bg-[#ae2b00] text-white'
-              }`}
-            >
-              <span className="material-symbols-outlined text-[14px]">warning</span>
-              <span className="font-citation-badge text-citation-badge tracking-wider">
-                SCORE {docket.score}
-              </span>
-            </div>
-            <span
-              className={`font-citation-badge text-citation-badge uppercase mt-0.5 font-bold ${
-                isDark ? 'text-[#FF7043]' : 'text-[#ae2b00]'
-              }`}
-            >
-              High Risk
-            </span>
-          </div>
-        </div>
-
-        {/* 3 Metric columns */}
-        <div
-          className={`grid grid-cols-3 gap-1 pt-1 mt-1 rounded-lg p-1 border ${
-            isDark
-              ? 'bg-[#23232B] border-[#33333C]'
-              : 'bg-[#f0edf4] border-[#e2bfb6]'
-          }`}
-        >
-          <div className="flex flex-col items-center text-center p-1">
-            <span
-              className={`font-headline-sm text-headline-sm font-bold ${
-                isDark ? 'text-[#FF7043]' : 'text-[#ae2b00]'
-              }`}
-            >
-              {docket.infractionCount}
-            </span>
-            <span
-              className={`font-citation-badge text-citation-badge uppercase ${
-                isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-              }`}
-            >
-              Infractions
-            </span>
-          </div>
-
-          <div
-            className={`flex flex-col items-center text-center p-1 rounded border ${
-              isDark
-                ? 'bg-[#1B1B21] border-[#33333C]/60 text-[#F1EFE9]'
-                : 'bg-white border-[#e2bfb6] text-[#1b1b20]'
-            }`}
-          >
-            <span className="font-headline-sm text-headline-sm font-bold truncate max-w-full px-1">
-              {docket.id === 'zepto-cart' ? 'Zepto' : docket.domain.split('.')[0]}
-            </span>
-            <span
-              className={`font-citation-badge text-citation-badge uppercase ${
-                isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-              }`}
-            >
-              Identified App
-            </span>
-          </div>
-
-          <div className="flex flex-col items-center text-center p-1">
-            <span
-              className={`font-headline-sm text-headline-sm font-bold ${
-                isDark ? 'text-[#45dfa4]' : 'text-[#006b5e]'
-              }`}
-            >
-              High
-            </span>
-            <span
-              className={`font-citation-badge text-citation-badge uppercase ${
-                isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-              }`}
-            >
-              Confidence
-            </span>
-          </div>
+          )}
         </div>
       </div>
 
-      {/* Interactive Evidence Capture Preview with Visual Pins */}
-      <div
-        className={`relative w-full rounded-xl p-3.5 border shadow-lg mb-4 overflow-hidden ${
-          isDark
-            ? 'bg-[#1B1B21] border-[#33333C]'
-            : 'bg-white border-[#e2bfb6]/70'
-        }`}
-      >
-        <div
-          className={`flex items-center justify-between pb-2 mb-2 border-b ${
-            isDark ? 'border-[#33333C]' : 'border-[#e2bfb6]'
-          }`}
-        >
-          <div className="flex items-center gap-1.5">
-            <span
-              className={`material-symbols-outlined text-[18px] ${
-                isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-              }`}
-            >
-              screenshot_monitor
-            </span>
-            <span
-              className={`font-label-md text-label-md font-bold ${
-                isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-              }`}
-            >
-              Inspected Capture Preview
-            </span>
-          </div>
-          <div
-            className={`flex items-center gap-1 px-2 py-0.5 rounded border ${
-              isDark
-                ? 'bg-[#23232B] border-[#33333C]'
-                : 'bg-[#f0edf4] border-[#e2bfb6]'
-            }`}
-          >
-            <span
-              className={`material-symbols-outlined text-[14px] ${
-                isDark ? 'text-[#FF7043]' : 'text-[#ae2b00]'
-              }`}
-            >
-              pin_drop
-            </span>
-            <span
-              className={`font-citation-badge text-citation-badge ${
-                isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-              }`}
-            >
-              {docket.pins.length} PINS LOGGED
-            </span>
-          </div>
-        </div>
-
-        {/* Mock Screen or Uploaded Image Container with Interactive Pins */}
-        <div
-          className={`relative w-full rounded-lg p-2.5 overflow-hidden select-none border ${
-            isDark
-              ? 'bg-[#15151A] border-[#33333C]'
-              : 'bg-[#fbf8ff] border-[#e2bfb6]'
-          }`}
-        >
-          {customImage ? (
-            <div className="relative w-full min-h-[340px] max-h-[440px] rounded overflow-hidden flex items-center justify-center bg-black">
+      <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:gap-8 lg:items-start">
+        {/* Screenshot with pins */}
+        <div className="lg:sticky lg:top-6 flex flex-col gap-2">
+          <div className={`rounded-xl border shadow-md overflow-hidden ${t.card} flex justify-center`}>
+            <div className="relative inline-block max-w-full leading-[0]">
               <img
-                src={customImage}
-                alt="Audit screenshot"
-                className="w-full h-full object-contain"
+                src={result.imageDataUrl}
+                alt={`Screenshot of ${result.platformGuess} ${result.screenType}`}
+                className="block max-w-full h-auto max-h-[70dvh] object-contain"
               />
-              {/* Overlay pins */}
-              {docket.pins.map((pin) => (
-                <button
-                  key={pin.id}
-                  type="button"
-                  onClick={() => handlePinClick(pin.id)}
-                  style={{ top: pin.topPct, left: pin.leftPct }}
-                  className={`absolute -translate-x-1/2 -translate-y-1/2 w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs ring-2 ring-white shadow-xl transition-transform active:scale-95 ${
-                    selectedPinId === pin.id ? 'scale-125' : ''
-                  } ${
-                    isDark
-                      ? 'bg-[#FF7043] text-[#15151A]'
-                      : 'bg-[#ae2b00] text-white'
-                  }`}
-                >
-                  {pin.id}
-                </button>
-              ))}
+              {findings.map((f) => {
+                const active = selectedId === f.id;
+                return (
+                  <React.Fragment key={f.id}>
+                    {active && (
+                      <div
+                        aria-hidden="true"
+                        className="absolute border-2 border-[#FF7043] rounded-sm shadow-[0_0_0_9999px_rgba(21,21,26,0.35)] pointer-events-none"
+                        style={{ left: `${f.box.x * 100}%`, top: `${f.box.y * 100}%`, width: `${f.box.w * 100}%`, height: `${f.box.h * 100}%` }}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => focusFinding(f.id)}
+                      aria-label={`Finding ${f.id}: ${f.pattern}, ${confidenceLabel(f.confidence)}`}
+                      aria-pressed={active}
+                      className={`absolute -translate-x-1/2 -translate-y-1/2 w-7 h-7 rounded-full text-[12px] font-bold font-citation-code flex items-center justify-center shadow-lg ring-2 ring-white/90 transition-transform ${
+                        active ? 'scale-125' : 'hover:scale-110'
+                      } ${f.confidence === 'low' ? 'bg-[#6E6E78] text-white' : f.confidence === 'medium' ? 'bg-[#F0B35A] text-[#1a1a1f]' : 'bg-[#FF7043] text-white'} ${t.focus}`}
+                      style={{ left: `${(f.box.x + f.box.w / 2) * 100}%`, top: `${(f.box.y + f.box.h / 2) * 100}%` }}
+                    >
+                      {f.id}
+                    </button>
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          </div>
+          <div className={`flex items-center justify-between font-citation-code text-[11px] ${t.dim}`}>
+            <span>Tap a marker to jump to its finding.</span>
+            <button type="button" onClick={onReanalyze} className={`inline-flex items-center gap-1 underline-offset-2 hover:underline ${t.focus} rounded`}>
+              <span className="material-symbols-outlined text-[14px]" aria-hidden="true">refresh</span>
+              Re-run analysis
+            </button>
+          </div>
+        </div>
+
+        {/* Findings */}
+        <div className="flex flex-col gap-3">
+          {none ? (
+            <div className={`p-5 rounded-xl border shadow-sm flex flex-col gap-2 ${t.card}`}>
+              <div className="flex items-center gap-2">
+                <span className={`material-symbols-outlined text-[22px] ${t.teal}`} aria-hidden="true">verified_user</span>
+                <span className={`font-headline-sm text-headline-sm font-bold ${t.text}`}>This screen looks clean.</span>
+              </div>
+              <p className={`font-body-sm text-body-sm leading-relaxed ${t.muted}`}>
+                The model did not see any of the 13 prohibited patterns on this screenshot. Dark patterns often live on the <em>next</em> step — the payment page, the cancel flow — so try screenshotting that screen too.
+              </p>
+              <button type="button" onClick={onGoToScan} className={`self-start mt-1 min-h-[44px] px-4 rounded-lg font-label-md text-label-md font-semibold ${t.accentBg} ${t.focus}`}>
+                Scan another screen
+              </button>
             </div>
           ) : (
-            <>
-              {/* Ambient Mock App Header */}
-              <div
-                className={`flex items-center justify-between mb-2 p-1.5 rounded border ${
-                  isDark
-                    ? 'bg-[#23232B] border-[#33333C]'
-                    : 'bg-[#f0edf4] border-[#e2bfb6]'
-                }`}
-              >
-                <div className="flex items-center gap-1.5">
-                  <div
-                    className={`w-6 h-6 rounded border flex items-center justify-center font-bold text-[11px] ${
-                      isDark
-                        ? 'bg-[#FF7043]/20 border-[#FF7043]/40 text-[#FF7043]'
-                        : 'bg-[#ffdad6] border-[#ae2b00]/40 text-[#ae2b00]'
-                    }`}
-                  >
-                    Z
-                  </div>
-                  <span
-                    className={`font-label-md text-label-md font-semibold ${
-                      isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-                    }`}
-                  >
-                    Instant Delivery · 10 Mins
-                  </span>
-                </div>
-                <span
-                  className={`font-citation-badge text-citation-badge font-bold ${
-                    isDark ? 'text-[#45dfa4]' : 'text-[#006b5e]'
-                  }`}
+            findings.map((f: Finding) => {
+              const active = selectedId === f.id;
+              const isDisputed = disputed.includes(f.id);
+              return (
+                <article
+                  id={`finding-${f.id}`}
+                  key={f.id}
+                  onClick={() => setSelectedId(f.id)}
+                  className={`p-4 rounded-xl border shadow-sm flex flex-col gap-2 transition-colors ${t.card} ${active ? (t.isDark ? 'border-[#FF7043]' : 'border-[#ae2b00]') : ''} ${isDisputed ? 'opacity-60' : ''}`}
                 >
-                  EXPRESS CART
-                </span>
-              </div>
-
-              {/* Pin [1] Target: Ticking Countdown */}
-              <div
-                role="button"
-                tabIndex={0}
-                onClick={() => handlePinClick(1)}
-                className={`relative mb-2 rounded-lg p-2 border shadow-xs transition-transform active:scale-[0.99] cursor-pointer ${
-                  selectedPinId === 1
-                    ? 'ring-2 ring-[#FF7043]'
-                    : ''
-                } ${
-                  isDark
-                    ? 'bg-[#23232B] border-[#FF7043]/50 text-[#F1EFE9]'
-                    : 'bg-[#ffdad6]/50 border-[#ae2b00]/40 text-[#1b1b20]'
-                }`}
-              >
-                <div
-                  className={`absolute -top-2 -left-2 z-10 w-6 h-6 rounded-full font-bold text-[11px] flex items-center justify-center shadow-md ring-2 ring-white ${
-                    isDark
-                      ? 'bg-[#FF7043] text-[#15151A]'
-                      : 'bg-[#ae2b00] text-white'
-                  }`}
-                >
-                  1
-                </div>
-                <div className="flex items-center justify-between pl-3">
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-start gap-3">
                     <span
-                      className={`material-symbols-outlined text-[18px] ${
-                        isDark ? 'text-[#FF7043]' : 'text-[#ae2b00]'
+                      className={`w-7 h-7 rounded-full shrink-0 text-[12px] font-bold font-citation-code flex items-center justify-center ${
+                        f.confidence === 'low' ? 'bg-[#6E6E78] text-white' : f.confidence === 'medium' ? 'bg-[#F0B35A] text-[#1a1a1f]' : 'bg-[#FF7043] text-white'
                       }`}
+                      aria-hidden="true"
                     >
-                      timer
+                      {f.id}
                     </span>
-                    <span
-                      className={`font-label-md text-label-md font-bold ${
-                        isDark ? 'text-[#FF7043]' : 'text-[#ae2b00]'
-                      }`}
-                    >
-                      ⚡ High Demand: Only 2 slots left
-                    </span>
-                  </div>
-                  <span
-                    className={`font-citation-code text-citation-code px-2 py-[2px] rounded font-semibold tracking-wider ${
-                      isDark
-                        ? 'bg-[#FF7043] text-[#15151A]'
-                        : 'bg-[#ae2b00] text-white'
-                    }`}
-                  >
-                    {formatTimer(timerSeconds)}
-                  </span>
-                </div>
-              </div>
-
-              {/* Cart Items */}
-              <div
-                className={`rounded-lg p-2 mb-2 border flex flex-col gap-1 ${
-                  isDark
-                    ? 'bg-[#1B1B21] border-[#33333C]'
-                    : 'bg-white border-[#e2bfb6]'
-                }`}
-              >
-                <div
-                  className={`flex justify-between items-center text-body-sm font-body-sm ${
-                    isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-                  }`}
-                >
-                  <span>Organic Hass Avocados (2 pcs)</span>
-                  <span className="font-citation-code text-[#A8A6A0]">₹189.00</span>
-                </div>
-                <div
-                  className={`flex justify-between items-center text-body-sm font-body-sm ${
-                    isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-                  }`}
-                >
-                  <span>Almond Milk Cold Pressed (1L)</span>
-                  <span className="font-citation-code text-[#A8A6A0]">₹240.00</span>
-                </div>
-
-                {/* Pin [2] Target: Sneaky Pre-Selected Addon */}
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => handlePinClick(2)}
-                  className={`relative mt-1 pt-1.5 p-1.5 rounded border transition-transform active:scale-[0.99] cursor-pointer ${
-                    selectedPinId === 2 ? 'ring-2 ring-[#FF7043]' : ''
-                  } ${
-                    isDark
-                      ? 'bg-[#23232B] border-[#FF7043]/40'
-                      : 'bg-[#ffdad6]/40 border-[#ae2b00]/30'
-                  }`}
-                >
-                  <div
-                    className={`absolute -top-2 -left-2 z-10 w-6 h-6 rounded-full font-bold text-[11px] flex items-center justify-center shadow-md ring-2 ring-white ${
-                      isDark
-                        ? 'bg-[#FF7043] text-[#15151A]'
-                        : 'bg-[#ae2b00] text-white'
-                    }`}
-                  >
-                    2
-                  </div>
-                  <div className="flex items-center justify-between pl-3">
-                    <div className="flex items-center gap-1.5">
-                      <span
-                        className={`material-symbols-outlined text-[18px] ${
-                          isDark ? 'text-[#FF7043]' : 'text-[#ae2b00]'
-                        }`}
-                      >
-                        check_box
-                      </span>
-                      <span
-                        className={`font-body-sm text-body-sm font-semibold ${
-                          isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-                        }`}
-                      >
-                        Handling fee & Instant Green Tip
-                      </span>
+                    <div className="flex flex-col gap-1 min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <h3 className={`font-headline-sm text-headline-sm font-bold uppercase tracking-wide ${t.accent}`}>{f.pattern}</h3>
+                        <span className={`px-2 py-[2px] rounded border font-citation-badge text-citation-badge ${t.neutralSoft}`}>Annexure 1 · Item {f.annexItem}</span>
+                        <span className={`px-2 py-[2px] rounded border font-citation-badge text-citation-badge uppercase font-semibold ${confidenceClasses(t, f.confidence)}`}>{confidenceLabel(f.confidence)}</span>
+                      </div>
+                      <blockquote className={`font-body-md text-body-md italic border-l-2 pl-3 ${t.isDark ? 'border-[#33333C] text-[#F1EFE9]' : 'border-[#e2bfb6] text-[#1b1b20]'}`}>“{f.evidence}”</blockquote>
+                      <p className={`font-body-sm text-body-sm leading-relaxed ${t.muted}`}>{f.explanation}</p>
+                      <div className={`flex flex-wrap items-center justify-between gap-2 pt-1 font-citation-code text-[11px] ${t.dim}`}>
+                        <span>{f.clause}</span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDisputed((d) => (d.includes(f.id) ? d.filter((x) => x !== f.id) : [...d, f.id]));
+                          }}
+                          className={`underline-offset-2 hover:underline ${t.focus} rounded`}
+                        >
+                          {isDisputed ? 'Marked as wrong · undo' : 'This finding looks wrong'}
+                        </button>
+                      </div>
                     </div>
-                    <span
-                      className={`font-citation-code text-citation-code font-bold ${
-                        isDark ? 'text-[#FF7043]' : 'text-[#ae2b00]'
-                      }`}
-                    >
-                      +₹28.00
-                    </span>
                   </div>
-                  <p
-                    className={`text-[10px] pl-7 italic ${
-                      isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-                    }`}
-                  >
-                    Auto-applied without prior consent
-                  </p>
-                </div>
-              </div>
-
-              {/* Action Mockup */}
-              <div
-                className={`rounded-lg p-2 flex flex-col gap-1.5 border ${
-                  isDark
-                    ? 'bg-[#1B1B21] border-[#33333C]'
-                    : 'bg-white border-[#e2bfb6]'
-                }`}
-              >
-                <button
-                  type="button"
-                  className={`w-full py-2 rounded font-label-md text-label-md font-bold flex items-center justify-center gap-1.5 shadow-sm ${
-                    isDark
-                      ? 'bg-[#45dfa4] text-[#002114]'
-                      : 'bg-[#006b5e] text-white'
-                  }`}
-                >
-                  <span>Proceed to Pay ₹457.00</span>
-                  <span className="material-symbols-outlined text-[16px]">
-                    arrow_forward
-                  </span>
-                </button>
-
-                {/* Pin [3] Target: Confirm Shaming Cancel text */}
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => handlePinClick(3)}
-                  className={`relative mt-0.5 transition-transform active:scale-[0.99] cursor-pointer ${
-                    selectedPinId === 3 ? 'ring-2 ring-[#FF7043]' : ''
-                  }`}
-                >
-                  <div
-                    className={`absolute -top-2 -left-2 z-10 w-6 h-6 rounded-full font-bold text-[11px] flex items-center justify-center shadow-md ring-2 ring-white ${
-                      isDark
-                        ? 'bg-[#FF7043] text-[#15151A]'
-                        : 'bg-[#ae2b00] text-white'
-                    }`}
-                  >
-                    3
-                  </div>
-                  <div
-                    className={`text-center py-1.5 px-2 rounded border pl-4 ${
-                      isDark
-                        ? 'bg-[#23232B] border-[#FF7043]/40 text-[#F1EFE9]'
-                        : 'bg-[#ffdad6]/40 border-[#ae2b00]/30 text-[#1b1b20]'
-                    }`}
-                  >
-                    <span className="font-body-sm text-body-sm underline italic">
-                      "No thanks, I hate saving money & trees"
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </>
+                </article>
+              );
+            })
           )}
 
-          {/* Ambient footer */}
-          <div
-            className={`mt-2 flex items-center justify-between px-1 ${
-              isDark ? 'text-[#787672]' : 'text-[#8e7069]'
-            }`}
-          >
-            <span className="font-citation-badge text-citation-badge uppercase">
-              Target Screen: Checkout Final V3.2
-            </span>
-            <span
-              className={`font-citation-badge text-citation-badge uppercase font-semibold ${
-                isDark ? 'text-[#FF7043]' : 'text-[#ae2b00]'
-              }`}
-            >
-              Tap any pin to inspect violation
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Pattern Breakdown Header */}
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-1.5">
-          <span
-            className={`material-symbols-outlined text-[20px] ${
-              isDark ? 'text-[#FF7043]' : 'text-[#ae2b00]'
-            }`}
-          >
-            policy
-          </span>
-          <h2
-            className={`font-headline-md text-headline-md font-bold ${
-              isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-            }`}
-          >
-            Pattern Breakdown
-          </h2>
-        </div>
-        <span
-          className={`font-citation-badge text-citation-badge uppercase font-semibold ${
-            isDark ? 'text-[#787672]' : 'text-[#8e7069]'
-          }`}
-        >
-          CCPA 2023 GUIDELINES
-        </span>
-      </div>
-
-      {/* Findings List (3 Cards) */}
-      <div className="flex flex-col gap-3 mb-4">
-        {docket.pins.map((pin) => (
-          <article
-            key={pin.id}
-            id={`finding-${pin.id}`}
-            className={`relative rounded-xl p-3.5 border shadow-lg transition-all ${
-              selectedPinId === pin.id
-                ? isDark
-                  ? 'border-[#FF7043] ring-1 ring-[#FF7043]'
-                  : 'border-[#ae2b00] ring-1 ring-[#ae2b00]'
-                : isDark
-                ? 'bg-[#1B1B21] border-[#33333C]'
-                : 'bg-white border-[#e2bfb6]/70'
-            }`}
-          >
-            {/* Top row */}
-            <div className="flex items-start justify-between gap-2 mb-1.5">
-              <div className="flex items-center gap-1.5">
-                <div
-                  className={`w-6 h-6 rounded-full font-bold text-[11px] flex items-center justify-center shrink-0 ring-2 ring-white shadow-sm ${
-                    isDark
-                      ? 'bg-[#FF7043] text-[#15151A]'
-                      : 'bg-[#ae2b00] text-white'
-                  }`}
-                >
-                  {pin.id}
-                </div>
-                <span
-                  className={`font-headline-sm text-headline-sm tracking-tight uppercase font-bold ${
-                    isDark ? 'text-[#FF7043]' : 'text-[#ae2b00]'
-                  }`}
-                >
-                  {pin.patternName}
-                </span>
-              </div>
-
-              <span
-                className={`font-citation-badge text-citation-badge px-2 py-[2px] rounded-full uppercase shrink-0 font-bold ${
-                  pin.confidence === 'High Confidence'
-                    ? isDark
-                      ? 'bg-[#FF7043] text-[#15151A]'
-                      : 'bg-[#ae2b00] text-white'
-                    : isDark
-                    ? 'bg-[#FF7043]/20 border border-[#FF7043]/40 text-[#FF7043]'
-                    : 'bg-[#ffdad6] text-[#ae2b00] border border-[#d1431a]/30'
-                }`}
-              >
-                {pin.confidence}
-              </span>
-            </div>
-
-            {/* Clause citation */}
-            <div className="flex items-center gap-2 mb-2 pl-0.5">
-              <span
-                className={`font-citation-code text-citation-code px-1.5 py-[2px] rounded border ${
-                  isDark
-                    ? 'bg-[#23232B] border-[#33333C] text-[#F1EFE9]'
-                    : 'bg-[#f0edf4] border-[#e2bfb6] text-[#1b1b20]'
-                }`}
-              >
-                {pin.clause}
-              </span>
-            </div>
-
-            {/* Verbatim quote box */}
-            <div
-              className={`rounded-lg p-2.5 mb-2 border ${
-                isDark
-                  ? 'bg-[#23232B] border-[#33333C]'
-                  : 'bg-[#f5f2fa] border-[#e2bfb6]'
-              }`}
-            >
-              <div className="flex items-start gap-1.5">
-                <span
-                  className={`material-symbols-outlined text-[18px] shrink-0 mt-[1px] ${
-                    isDark ? 'text-[#FF7043]' : 'text-[#ae2b00]'
-                  }`}
-                >
-                  format_quote
-                </span>
-                <p
-                  className={`font-body-md text-body-md italic leading-relaxed ${
-                    isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-                  }`}
-                >
-                  {pin.quote}
-                </p>
-              </div>
-            </div>
-
-            {/* Statutory description */}
-            <p
-              className={`font-body-md text-body-md leading-normal mb-2 ${
-                isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-              }`}
-            >
-              {pin.description}
+          {!none && (
+            <p className={`font-citation-code text-[11px] leading-snug ${t.dim}`}>
+              Confidence is the model’s own estimate. A genuine, disclosed limit is not a dark pattern — you decide what to report.
             </p>
-
-            {/* Precedent / statute link */}
-            <div
-              className={`pt-2 flex items-center justify-between border-t ${
-                isDark
-                  ? 'border-[#33333C] text-[#A8A6A0]'
-                  : 'border-[#e2bfb6] text-[#5a413a]'
-              }`}
-            >
-              <span
-                className={`font-citation-badge text-citation-badge uppercase ${
-                  isDark ? 'text-[#787672]' : 'text-[#8e7069]'
-                }`}
-              >
-                {pin.id === 1
-                  ? 'Legal Precedent: FTC v. Urgency AI'
-                  : pin.id === 2
-                  ? 'Auto-reversal Eligible: Yes'
-                  : 'Psychological Coercion Tag'}
-              </span>
-              <button
-                type="button"
-                onClick={() =>
-                  showToast(
-                    `Statute: Section 18 of Consumer Protection Act 2019 (${pin.clause})`
-                  )
-                }
-                className={`font-citation-code text-citation-code font-semibold hover:underline flex items-center gap-0.5 ${
-                  isDark ? 'text-[#FF7043]' : 'text-[#ae2b00]'
-                }`}
-              >
-                <span>View Statute</span>
-                <span className="material-symbols-outlined text-[14px]">
-                  arrow_outward
-                </span>
-              </button>
-            </div>
-
-            {/* Report misclassification */}
-            <div className="mt-1.5 flex items-center justify-end">
-              <button
-                type="button"
-                onClick={() => handleReportFinding(pin.id)}
-                disabled={reportedIds.includes(pin.id)}
-                className={`text-[11px] underline inline-flex items-center gap-1 transition-colors ${
-                  reportedIds.includes(pin.id)
-                    ? 'text-[#2DD4BF]'
-                    : isDark
-                    ? 'text-[#787672] hover:text-[#FF7043]'
-                    : 'text-[#8e7069] hover:text-[#ae2b00]'
-                }`}
-              >
-                <span className="material-symbols-outlined text-[13px]">
-                  {reportedIds.includes(pin.id) ? 'check' : 'flag'}
-                </span>
-                <span>
-                  {reportedIds.includes(pin.id)
-                    ? 'Reported to review queue'
-                    : 'Report this finding as wrong'}
-                </span>
-              </button>
-            </div>
-          </article>
-        ))}
-      </div>
-
-      {/* Consumer Rights Notice Strip */}
-      <div
-        className={`p-3.5 rounded-xl border flex items-start gap-2.5 mb-4 ${
-          isDark
-            ? 'bg-[#1B1B21] border-[#33333C]'
-            : 'bg-[#f5f2fa] border-[#e2bfb6]'
-        }`}
-      >
-        <span
-          className={`material-symbols-outlined text-[24px] shrink-0 ${
-            isDark ? 'text-[#45dfa4]' : 'text-[#006b5e]'
-          }`}
-        >
-          gavel
-        </span>
-        <div className="flex flex-col">
-          <span
-            className={`font-label-md text-label-md font-bold ${
-              isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
-            }`}
-          >
-            Legal Admissibility Ready
-          </span>
-          <p
-            className={`font-body-sm text-body-sm mt-0.5 leading-relaxed ${
-              isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-            }`}
-          >
-            This forensic snapshot is timestamped with cryptographic hash verification
-            and complies with formal submission standards for the National Consumer
-            Helpline (NCH).
-          </p>
+          )}
         </div>
       </div>
 
-      {/* Sticky Bottom Action Bar */}
-      <div
-        className={`sticky bottom-16 left-0 right-0 z-40 pt-2.5 pb-2 border-t shadow-2xl backdrop-blur-md ${
-          isDark
-            ? 'bg-[#15151A]/95 border-[#33333C]'
-            : 'bg-[#fbf8ff]/95 border-[#e2bfb6]'
-        }`}
-      >
-        <div className="flex flex-col gap-2 w-full">
-          {/* Primary Action: Grievance Draft */}
+      {/* Actions: sticky bottom bar on phones, inline on desktop */}
+      <div className={`fixed lg:static bottom-16 lg:bottom-auto inset-x-0 lg:inset-auto z-40 px-4 lg:px-0 pb-3 lg:pb-0 pt-2 lg:pt-2 border-t lg:border-0 backdrop-blur-xl lg:backdrop-blur-none ${t.isDark ? 'bg-[#15151A]/95 border-[#33333C]' : 'bg-[#fbf8ff]/95 border-[#e2bfb6]/40'} lg:bg-transparent`}>
+        <div className="max-w-lg md:max-w-2xl lg:max-w-none mx-auto flex gap-2">
           <button
+            id="draft-complaint"
             type="button"
+            disabled={none}
             onClick={onGoToGrievance}
-            className={`w-full h-12 rounded-xl font-headline-sm text-headline-sm flex items-center justify-center gap-1.5 shadow-md transition-all active:scale-[0.98] font-bold ${
-              isDark
-                ? 'bg-[#FF7043] hover:bg-[#ff845e] text-[#15151A]'
-                : 'bg-[#ae2b00] hover:bg-[#d1431a] text-white'
-            }`}
+            className={`flex-1 min-h-[48px] rounded-lg font-label-md text-label-md font-semibold flex items-center justify-center gap-2 shadow-md disabled:opacity-40 disabled:cursor-not-allowed ${t.accentBg} ${t.focus}`}
           >
-            <span className="material-symbols-outlined text-[20px]">
-              description
-            </span>
-            <span>Draft Grievance Complaint</span>
-            <span className="material-symbols-outlined text-[18px]">
-              chevron_right
-            </span>
+            <span className="material-symbols-outlined text-[20px]" aria-hidden="true">gavel</span>
+            Draft complaint
           </button>
-
-          {/* Secondary Action: Share Audit Card */}
           <button
+            id="share-card"
             type="button"
-            onClick={onGoToShareDossier}
-            className={`w-full h-11 rounded-xl font-label-md text-label-md flex items-center justify-center gap-1.5 border transition-all active:scale-[0.98] font-semibold ${
-              isDark
-                ? 'bg-[#1B1B21] hover:bg-[#23232B] border-[#33333C] text-[#F1EFE9]'
-                : 'bg-white hover:bg-[#f0edf4] border-[#e2bfb6] text-[#1b1b20]'
-            }`}
+            onClick={onGoToShare}
+            className={`flex-1 min-h-[48px] rounded-lg border font-label-md text-label-md font-semibold flex items-center justify-center gap-2 ${t.secondaryBtn} ${t.focus}`}
           >
-            <span
-              className={`material-symbols-outlined text-[18px] ${
-                isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
-              }`}
-            >
-              share
-            </span>
-            <span>Shareable Violation Report</span>
+            <span className="material-symbols-outlined text-[20px]" aria-hidden="true">ios_share</span>
+            Share card
           </button>
         </div>
       </div>
-
-      {/* Toast */}
-      {toastMessage && (
-        <div
-          className={`fixed bottom-24 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg shadow-xl flex items-center gap-2 z-50 text-sm font-medium transition-all ${
-            isDark
-              ? 'bg-[#23232B] text-[#F1EFE9] border border-[#33333C]'
-              : 'bg-[#1b1b20] text-white'
-          }`}
-        >
-          <span className="material-symbols-outlined text-[18px] text-[#2DD4BF]">
-            info
-          </span>
-          <span>{toastMessage}</span>
-        </div>
-      )}
     </div>
   );
 };

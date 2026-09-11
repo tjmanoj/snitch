@@ -1,10 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { ThemeMode, DarkPattern } from '../types';
 import { PROHIBITED_PATTERNS } from '../data/patterns';
-import { TEST_DOCKETS } from '../data/dockets';
 
 interface PatternsScreenProps {
   theme: ThemeMode;
+  /** Takes the user to the Scan tab to check a real screen for this pattern. */
   onAuditPattern: (patternId: string) => void;
 }
 
@@ -34,7 +34,7 @@ export const PatternsScreen: React.FC<PatternsScreenProps> = ({
   }, [searchQuery, activeCategory]);
 
   return (
-    <div className="flex flex-col w-full pb-20 space-y-4">
+    <div className="flex flex-col w-full pb-6 space-y-4">
       {/* Header */}
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between">
@@ -49,7 +49,7 @@ export const PatternsScreen: React.FC<PatternsScreenProps> = ({
                 isDark ? 'text-[#FF7043]' : 'text-[#ae2b00]'
               }`}
             >
-              CCPA Gazetted Annexure 1
+              Annexure 1 · 2023 Guidelines
             </span>
           </div>
           <span
@@ -75,8 +75,8 @@ export const PatternsScreen: React.FC<PatternsScreenProps> = ({
             isDark ? 'text-[#A8A6A0]' : 'text-[#5a413a]'
           }`}
         >
-          Central Consumer Protection Authority Guidelines for Prevention and
-          Regulation of Dark Patterns, 2023.
+          Named in Annexure 1 of the Central Consumer Protection Authority’s Guidelines for
+          Prevention and Regulation of Dark Patterns, 2023 (Guideline 4 prohibits them).
         </p>
       </div>
 
@@ -141,10 +141,10 @@ export const PatternsScreen: React.FC<PatternsScreenProps> = ({
       </div>
 
       {/* List of Patterns */}
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3 sm:grid sm:grid-cols-2 lg:grid-cols-3 sm:gap-3">
         {filteredPatterns.length === 0 ? (
           <div
-            className={`p-6 text-center rounded-xl border ${
+            className={`p-6 text-center rounded-xl border sm:col-span-full ${
               isDark
                 ? 'bg-[#1B1B21] border-[#33333C] text-[#A8A6A0]'
                 : 'bg-white border-[#e2bfb6] text-[#5a413a]'
@@ -296,7 +296,7 @@ export const PatternsScreen: React.FC<PatternsScreenProps> = ({
                     }`}
                   >
                     <span>
-                      {isExpanded ? 'Hide Precedent' : 'Legal Precedents'}
+                      {isExpanded ? 'Hide enforcement note' : 'Enforcement note'}
                     </span>
                     <span className="material-symbols-outlined text-[16px]">
                       {isExpanded ? 'expand_less' : 'expand_more'}
@@ -312,7 +312,7 @@ export const PatternsScreen: React.FC<PatternsScreenProps> = ({
                         : 'bg-[#ae2b00] text-white hover:bg-[#d1431a]'
                     }`}
                   >
-                    <span>Inspect Example</span>
+                    <span>Scan a screen for this</span>
                     <span className="material-symbols-outlined text-[14px]">
                       arrow_forward
                     </span>
@@ -333,12 +333,13 @@ export const PatternsScreen: React.FC<PatternsScreenProps> = ({
                         isDark ? 'text-[#F1EFE9]' : 'text-[#1b1b20]'
                       }`}
                     >
-                      Enforcement Mandate:
+                      Why it is illegal:
                     </span>
-                    Section 18(2)(l) of Consumer Protection Act 2019 empowers the CCPA
-                    to issue safety notices to consumers against unfair trade
-                    practices. Violators are subject to Section 21 financial penalties
-                    and public disclosure mandates.
+                    Guideline 4 of the 2023 Guidelines prohibits every platform from engaging
+                    in this practice. The Central Consumer Protection Authority acts under
+                    Section 18 of the Consumer Protection Act, 2019 and can impose penalties
+                    under Section 21. Since 2025 the CCPA has fined quick-commerce, edtech,
+                    pharmacy and ticketing platforms for exactly these patterns.
                   </div>
                 )}
               </article>
