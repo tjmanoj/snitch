@@ -154,7 +154,6 @@ export const AnalysisScreen: React.FC<AnalysisScreenProps> = ({
               From device cache
             </span>
           )}
-          <span className={`px-2 py-[3px] rounded border font-citation-badge text-citation-badge uppercase font-semibold ${t.neutralSoft}`}>{result.model}</span>
         </div>
         <h2 className={`font-headline-lg text-headline-lg md:font-display-lg-mobile tracking-tight ${t.text}`}>
           {result.platformGuess} <span className={t.dim}>·</span> <span className={t.muted}>{result.screenType}</span>

@@ -33,9 +33,63 @@ export function citationFor(item: number): string {
 function getClient(): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    throw Object.assign(new Error('GEMINI_API_KEY is not set on the server.'), { status: 500, code: 'NO_API_KEY' });
+    throw fault('The analysis service is not configured.', 500, 'NO_API_KEY');
   }
   return new GoogleGenAI({ apiKey });
+}
+
+/**
+ * Every error we hand back to the browser carries a stable `code`. The client maps
+ * that code to the wording the user sees, so provider names, model names and raw
+ * upstream text never reach the page.
+ */
+export type FaultCode =
+  | 'NO_API_KEY'
+  | 'BAD_REQUEST'
+  | 'IMAGE_TOO_LARGE'
+  | 'UNREADABLE_RESPONSE'
+  | 'RATE_LIMITED'
+  | 'UPSTREAM_BUSY'
+  | 'UPSTREAM_ERROR'
+  | 'TIMEOUT';
+
+export function fault(message: string, status: number, code: FaultCode) {
+  return Object.assign(new Error(message), { status, code });
+}
+
+/**
+ * The SDK reports provider failures as an Error whose message is the raw upstream
+ * JSON. Parse what we can, log the real thing for whoever runs the server, and
+ * return a fault carrying only a code.
+ */
+function normaliseUpstream(err: any, label: string) {
+  if (err?.code && err?.status) return err; // already one of ours
+
+  let upstreamStatus = Number(err?.status) || 0;
+  let upstreamText = String(err?.message || '');
+  try {
+    const parsed = JSON.parse(upstreamText);
+    const inner = parsed?.error ?? parsed;
+    if (inner?.code) upstreamStatus = Number(inner.code) || upstreamStatus;
+    if (inner?.message) upstreamText = String(inner.message);
+  } catch {
+    /* message was not JSON; keep it as-is for the log */
+  }
+
+  console.error(`[snitch] ${label} failed (upstream status ${upstreamStatus || 'unknown'}): ${upstreamText}`);
+
+  if (upstreamStatus === 429) return fault('The service is busy.', 429, 'RATE_LIMITED');
+  if (upstreamStatus === 503) return fault('The service is briefly unavailable.', 503, 'UPSTREAM_BUSY');
+  return fault('The service could not complete this request.', 502, 'UPSTREAM_ERROR');
+}
+
+/** Run one provider call, turning any failure into a coded fault. */
+async function callModel<T>(run: () => Promise<T>, label: string): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    throw normaliseUpstream(err, label);
+  }
 }
 
 const ANALYZE_SYSTEM = `You are a consumer-protection auditor applying India's "Guidelines for Prevention and Regulation of Dark Patterns, 2023", issued by the Central Consumer Protection Authority (CCPA) under the Consumer Protection Act, 2019.
@@ -94,20 +148,20 @@ export interface AnalyzeInput {
 
 export async function analyzeScreenshot(input: AnalyzeInput) {
   if (!input?.imageBase64 || !input?.mimeType) {
-    throw Object.assign(new Error('imageBase64 and mimeType are required.'), { status: 400 });
+    throw fault('imageBase64 and mimeType are required.', 400, 'BAD_REQUEST');
   }
   if (!/^image\/(png|jpeg|jpg|webp)$/i.test(input.mimeType)) {
-    throw Object.assign(new Error('Only PNG, JPEG and WebP screenshots are supported.'), { status: 400 });
+    throw fault('Only PNG, JPEG and WebP screenshots are supported.', 400, 'BAD_REQUEST');
   }
   // ~4MB of base64 ≈ 3MB binary. The client downsizes before upload, so this is a safety net.
   if (input.imageBase64.length > 4_500_000) {
-    throw Object.assign(new Error('Screenshot is too large. Please upload an image under 3MB.'), { status: 413 });
+    throw fault('Screenshot is too large. Please upload an image under 3MB.', 413, 'IMAGE_TOO_LARGE');
   }
 
   const ai = getClient();
   const model = DEFAULT_MODEL;
 
-  const response = await ai.models.generateContent({
+  const response = await callModel(() => ai.models.generateContent({
     model,
     contents: [
       {
@@ -125,14 +179,15 @@ export async function analyzeScreenshot(input: AnalyzeInput) {
       temperature: 0.2,
       maxOutputTokens: 4096,
     },
-  });
+  }), 'Analysis');
 
   const text = response.text ?? '';
   let parsed: any;
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw Object.assign(new Error('The model returned a response that was not valid JSON. Please try again.'), { status: 502 });
+    console.error('[snitch] response was not valid JSON:', text.slice(0, 300));
+    throw fault('The response could not be read.', 502, 'UNREADABLE_RESPONSE');
   }
 
   // Normalise: make sure annex_item matches the pattern name, clamp boxes.
@@ -161,7 +216,6 @@ export async function analyzeScreenshot(input: AnalyzeInput) {
     screen_type: String(parsed.screen_type || 'Screen'),
     summary: String(parsed.summary || (normalised.length ? `${normalised.length} dark pattern(s) found.` : 'No dark patterns detected on this screen.')),
     findings: normalised,
-    model,
   };
 }
 
@@ -200,7 +254,7 @@ const grievanceSchema = {
 
 export async function draftGrievance(input: GrievanceInput) {
   if (!input || !Array.isArray(input.findings) || input.findings.length === 0) {
-    throw Object.assign(new Error('At least one finding is required to draft a grievance.'), { status: 400 });
+    throw fault('At least one finding is required to draft a grievance.', 400, 'BAD_REQUEST');
   }
   const ai = getClient();
   const model = DEFAULT_MODEL;
@@ -220,7 +274,7 @@ export async function draftGrievance(input: GrievanceInput) {
     tone: input.tone || 'formal',
   };
 
-  const response = await ai.models.generateContent({
+  const response = await callModel(() => ai.models.generateContent({
     model,
     contents: [{ role: 'user', parts: [{ text: `Draft the grievance from these facts:\n${JSON.stringify(facts, null, 2)}` }] }],
     config: {
@@ -230,19 +284,19 @@ export async function draftGrievance(input: GrievanceInput) {
       temperature: 0.4,
       maxOutputTokens: 2048,
     },
-  });
+  }), 'Drafting');
 
   const text = response.text ?? '';
   let parsed: any;
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw Object.assign(new Error('The model returned a response that was not valid JSON. Please try again.'), { status: 502 });
+    console.error('[snitch] response was not valid JSON:', text.slice(0, 300));
+    throw fault('The response could not be read.', 502, 'UNREADABLE_RESPONSE');
   }
   return {
     subject: String(parsed.subject || 'Complaint: dark patterns observed on ' + facts.platform).slice(0, 140),
     body: String(parsed.body || ''),
-    model,
   };
 }
 
@@ -257,21 +311,26 @@ export interface MinimalRes {
   end: (body?: string) => void;
 }
 
+/**
+ * The only place an error becomes an HTTP response. Anything without one of our own
+ * codes is treated as unexpected: it is logged in full and reported generically, so
+ * stack traces, provider names and model names never reach the browser. The client
+ * turns `code` into the sentence the user reads.
+ */
 export function sendError(res: MinimalRes, err: any) {
-  const status = Number(err?.status) || 500;
-  const message =
-    status === 500 && !err?.code
-      ? 'Analysis failed on the server. Check the GEMINI_API_KEY and try again.'
-      : String(err?.message || 'Unknown error');
-  // Surface upstream Gemini errors in a readable way.
-  const detail = err?.error?.message || err?.cause?.message || undefined;
-  res.status(status).json({ error: message, detail, code: err?.code });
+  const code = err?.code as FaultCode | undefined;
+  if (!code) {
+    console.error('[snitch] unhandled error:', err?.stack || err?.message || err);
+    res.status(500).json({ error: 'Something went wrong on our side.', code: 'UPSTREAM_ERROR' });
+    return;
+  }
+  res.status(Number(err?.status) || 500).json({ error: String(err?.message || 'Request failed.'), code });
 }
 
 export async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   let t: ReturnType<typeof setTimeout>;
   const timeout = new Promise<never>((_, reject) => {
-    t = setTimeout(() => reject(Object.assign(new Error(`${label} timed out after ${Math.round(ms / 1000)}s. Please try again.`), { status: 504 })), ms);
+    t = setTimeout(() => reject(fault(`${label} timed out after ${Math.round(ms / 1000)}s.`, 504, 'TIMEOUT')), ms);
   });
   try {
     return await Promise.race([p, timeout]);

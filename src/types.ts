@@ -55,7 +55,6 @@ export interface AuditResult {
   summary: string;
   findings: Finding[];
   analyzedAt: string;
-  model: string;
   /** True when this result was restored from the on-device cache of a previous real analysis. */
   cached?: boolean;
 }
@@ -76,7 +75,6 @@ export interface AnalyzeResponse {
     /** [ymin, xmin, ymax, xmax] on a 0–1000 scale (Gemini's native box format). */
     box_2d: [number, number, number, number];
   }>;
-  model: string;
 }
 
 /** Shape sent to POST /api/grievance */
@@ -98,5 +96,4 @@ export interface GrievanceRequest {
 export interface GrievanceResponse {
   subject: string;
   body: string;
-  model: string;
 }

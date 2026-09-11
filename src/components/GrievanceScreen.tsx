@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { AuditResult, GrievanceRequest, ThemeMode } from '../types';
 import { tokens } from '../lib/theme';
-import { ApiError, draftGrievance, templateGrievance } from '../lib/api';
+import { draftGrievance, friendlyError, templateGrievance } from '../lib/api';
 
 export interface GrievanceDraft {
   resultId: string;
@@ -80,10 +80,7 @@ export const GrievanceScreen: React.FC<GrievanceScreenProps> = ({ theme, result,
       if (token.cancelled) return;
       const tpl = templateGrievance(payload);
       onDraftChange({ resultId: result.id, tone: nextTone, subject: tpl.subject, body: tpl.body, source: 'template' });
-      setError(
-        (err instanceof ApiError ? err.message : 'Drafting service unavailable.') +
-          ' A template filled from your real findings is shown instead — edit it before sending.',
-      );
+      setError(`${friendlyError(err, 'draft')} In the meantime, a template filled from your real findings is shown below — read it and edit it before sending.`);
     } finally {
       if (!token.cancelled) setLoading(false);
     }

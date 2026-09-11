@@ -105,7 +105,7 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
             </span>
           </div>
           <span className={`shrink-0 px-2 py-[2px] font-citation-badge text-citation-badge uppercase rounded font-bold border ${health ? (health.configured ? t.tealSoft : t.amberSoft) : t.neutralSoft}`}>
-            {health ? (health.configured ? `Live · ${health.model}` : 'API key missing') : 'Connecting…'}
+            {health ? (health.configured ? 'Live' : 'Unavailable') : 'Connecting…'}
           </span>
         </div>
 

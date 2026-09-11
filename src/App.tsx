@@ -8,7 +8,7 @@ import { ShareDossierScreen } from './components/ShareDossierScreen';
 import { GrievanceScreen, type GrievanceDraft } from './components/GrievanceScreen';
 import { PatternsScreen } from './components/PatternsScreen';
 import { HelplineModal } from './components/HelplineModal';
-import { analyzeImage, ApiError, checkHealth, type HealthResponse } from './lib/api';
+import { analyzeImage, checkHealth, friendlyError, type HealthResponse } from './lib/api';
 import { fetchImageAsDataUrl, readFileAsDataUrl } from './lib/image';
 import { loadRecent, removeRecent } from './lib/storage';
 import { tokens } from './lib/theme';
@@ -97,13 +97,7 @@ export const App: React.FC = () => {
         setRecent(loadRecent());
       } catch (err: any) {
         if (run !== runRef.current) return;
-        const msg =
-          err instanceof ApiError
-            ? err.status === 500 && /GEMINI_API_KEY/i.test(err.message)
-              ? 'The server has no Gemini API key. Add GEMINI_API_KEY in Vercel → Settings → Environment Variables (or in a local .env) and redeploy.'
-              : err.message + (err.detail ? ` (${err.detail})` : '')
-            : err?.message || 'Something went wrong.';
-        setError(msg);
+        setError(friendlyError(err));
         setStatus('error');
       }
     },
@@ -133,7 +127,7 @@ export const App: React.FC = () => {
     setRecent(loadRecent());
   };
 
-  const apiLabel = health ? (health.configured ? `Live analysis · ${health.model}` : 'Server missing GEMINI_API_KEY') : 'Checking server…';
+  const apiLabel = health ? (health.configured ? 'Live analysis' : 'Scanning unavailable') : 'Checking…';
   const findingsCount = status === 'done' && result ? result.findings.length : 0;
 
   return (

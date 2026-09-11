@@ -5,11 +5,51 @@ import { findCached, saveRecent } from './storage';
 
 export class ApiError extends Error {
   status: number;
-  detail?: string;
-  constructor(message: string, status: number, detail?: string) {
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.status = status;
-    this.detail = detail;
+    this.code = code;
+  }
+}
+
+/**
+ * The single place an error becomes words on screen.
+ *
+ * The server sends a stable `code` and never sends provider names, model names or
+ * raw upstream text, so everything the user reads is written here: plain language,
+ * and always with the next step. Anything unrecognised falls through to a generic
+ * line rather than printing whatever the failure happened to say.
+ *
+ * `context` only changes the wording — a failure while drafting should not tell
+ * someone to retake their screenshot.
+ */
+export function friendlyError(err: unknown, context: 'scan' | 'draft' = 'scan'): string {
+  const e = err instanceof ApiError ? err : null;
+  const scanning = context === 'scan';
+  switch (e?.code) {
+    case 'NO_API_KEY':
+      return scanning
+        ? 'Snitch can’t run scans right now. Please try again later.'
+        : 'Snitch can’t draft complaints right now. Please try again later.';
+    case 'RATE_LIMITED':
+      return 'Snitch is busy right now. Wait a few seconds and try again.';
+    case 'UPSTREAM_BUSY':
+      return 'Snitch is briefly unavailable. Please try again in a minute.';
+    case 'UNREADABLE_RESPONSE':
+      return scanning
+        ? 'Snitch couldn’t read that screen clearly. Try again, or use a sharper screenshot.'
+        : 'Snitch couldn’t put the complaint together.';
+    case 'TIMEOUT':
+      return 'That took longer than expected. Check your connection and try again.';
+    case 'OFFLINE':
+      return 'You appear to be offline. Check your connection and try again.';
+    case 'IMAGE_TOO_LARGE':
+    case 'BAD_REQUEST':
+      // These already say exactly what to change, in plain language.
+      return e?.message || 'That screenshot could not be used. Try a different one.';
+    default:
+      return 'Something went wrong. Please try again.';
   }
 }
 
@@ -31,13 +71,13 @@ async function postJson<T>(url: string, body: unknown, timeoutMs: number): Promi
       data = { error: text.slice(0, 200) };
     }
     if (!res.ok) {
-      throw new ApiError(data.error || `Request failed (${res.status})`, res.status, data.detail);
+      throw new ApiError(data.error || `Request failed (${res.status})`, res.status, data.code);
     }
     return data as T;
   } catch (err: any) {
-    if (err?.name === 'AbortError') throw new ApiError('The request took too long. Check your connection and try again.', 504);
+    if (err?.name === 'AbortError') throw new ApiError('Request timed out.', 504, 'TIMEOUT');
     if (err instanceof ApiError) throw err;
-    throw new ApiError(err?.message || 'Network error. Are you online?', 0);
+    throw new ApiError('Network request failed.', 0, 'OFFLINE');
   } finally {
     clearTimeout(timer);
   }
@@ -106,7 +146,6 @@ export async function analyzeImage(src: File | string, opts: AnalyzeOptions = {}
     summary: data.summary || '',
     findings,
     analyzedAt: new Date().toISOString(),
-    model: data.model,
   };
   saveRecent(result);
   return result;
@@ -119,7 +158,6 @@ export async function draftGrievance(payload: GrievanceRequest): Promise<Grievan
 export interface HealthResponse {
   ok: boolean;
   configured: boolean;
-  model: string;
   time: string;
 }
 
@@ -159,5 +197,5 @@ export function templateGrievance(payload: GrievanceRequest): GrievanceResponse 
     `Mobile: ${c.phone || '[Your mobile number]'}`,
     `Email: ${c.email || '[Your email, optional]'}`,
   ].join('\n');
-  return { subject: `Dark patterns observed on ${payload.platform} — ${payload.findings.length} violation(s) of the 2023 Guidelines`, body, model: 'template' };
+  return { subject: `Dark patterns observed on ${payload.platform} — ${payload.findings.length} violation(s) of the 2023 Guidelines`, body };
 }
