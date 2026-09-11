@@ -35,7 +35,7 @@ npm run dev                  # http://localhost:3000  — /api/* is served by th
 
 1. Push the repo and import it in Vercel (framework: Vite — auto-detected).
 2. **Project → Settings → Environment Variables →** add `GEMINI_API_KEY` (Production + Preview).
-   Optional: `GEMINI_MODEL` (default `gemini-2.5-flash`).
+   Optional: `GEMINI_MODEL` (default `gemini-3.6-flash`).
 3. Redeploy. The functions in `api/` run on Node.js with a 60s limit (`vercel.json`).
 4. Open `/api/health` — it should return `"configured": true`.
 

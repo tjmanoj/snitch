@@ -4,7 +4,7 @@
 * **Deleted `src/data/dockets.ts`** (the fake Zepto/flight/subscription “dockets”) and every screen that rendered mock carts, fake timers and fake prices.
 * **New `/api/analyze`** (Vercel Function + Vite dev middleware) sends the uploaded screenshot to Gemini with a strict JSON schema and the 13-pattern rulebook. Findings, evidence, confidence, bounding boxes, platform guess and summary all come back live.
 * **New `/api/grievance`** drafts the complaint from the real findings. If the model call fails, a template is filled from the *same real findings* and is clearly labelled “Template fallback”.
-* **New `/api/health`** so the UI can show “Live · gemini-2.5-flash” or “API key missing”.
+* **New `/api/health`** so the UI can show “Live · gemini-3.6-flash” or “API key missing”.
 * Grievance form fields start **empty** (the old build pre-filled a fake name, phone and a `@india.gov.in` email).
 * Share card is **drawn on a canvas from the real result** (the old download was simulated).
 * “Recent scans” = an on-device cache of *real* results (localStorage), useful if the network is slow during a demo. Anything shown from cache is badged “From device cache”.

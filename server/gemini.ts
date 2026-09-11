@@ -5,7 +5,7 @@
  */
 import { GoogleGenAI, Type } from '@google/genai';
 
-export const DEFAULT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+export const DEFAULT_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 
 /** The 13 dark patterns named in Annexure 1 of the CCPA Guidelines for Prevention and Regulation of Dark Patterns, 2023. */
 export const PATTERNS_13: Array<{ item: number; name: string; definition: string }> = [
