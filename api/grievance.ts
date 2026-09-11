@@ -3,7 +3,7 @@
  * Body: GrievanceRequest (see src/types.ts)
  * Returns { subject, body, model } drafted live from the real findings.
  */
-import { draftGrievance, sendError, withTimeout } from '../server/gemini';
+import { draftGrievance, sendError, withTimeout } from '../server/gemini.js';
 
 export const config = { maxDuration: 60 };
 

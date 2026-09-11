@@ -3,7 +3,7 @@
  * Body: { imageBase64: string, mimeType: string }
  * Returns the live Gemini analysis of the screenshot. Nothing here is hardcoded.
  */
-import { analyzeScreenshot, sendError, withTimeout } from '../server/gemini';
+import { analyzeScreenshot, sendError, withTimeout } from '../server/gemini.js';
 
 export const config = { maxDuration: 60 };
 
