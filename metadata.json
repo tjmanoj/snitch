@@ -1,0 +1,6 @@
+{
+  "name": "SNITCH - CCPA Dark Pattern Watchdog",
+  "description": "Statutory forensic utility for auditing and reporting deceptive UI patterns prohibited under CCPA 2023 guidelines.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
