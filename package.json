@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Screenshot a manipulative screen. Snitch names the dark pattern live, cites India's 2023 CCPA guidelines, and drafts your complaint.",
   "engines": {
-    "node": ">=20"
+    "node": "24.x"
   },
   "scripts": {
     "dev": "vite",
@@ -31,5 +31,11 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "typescript": "~5.8.2"
+  },
+  "allowScripts": {
+    "@google/genai": true,
+    "esbuild": true,
+    "fsevents": true,
+    "protobufjs": true
   }
 }

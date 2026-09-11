@@ -9,8 +9,17 @@
 
   html, body {
     font-family: var(--font-body);
-    overscroll-behavior-y: none;
     -webkit-tap-highlight-color: transparent;
+  }
+
+  /* overscroll-behaviour and overflow go on the root element ONLY.
+     Both propagate from <html> to the viewport, so putting them on <body>
+     as well turns body into a second scroll container. Body is exactly as
+     tall as its content, so it can never scroll, and overscroll-behavior-y:
+     none stops the wheel from chaining up to the viewport — the page then
+     only moves when you drag the scrollbar itself. */
+  html {
+    overscroll-behavior-y: none;
   }
 
   .pb-safe {
@@ -142,8 +151,8 @@
   outline-offset: 2px;
 }
 
-/* Never let the page scroll sideways */
-html, body { max-width: 100%; overflow-x: hidden; }
+/* Never let the page scroll sideways. Root only — see the note above. */
+html { max-width: 100%; overflow-x: hidden; }
 
 /* Landscape phones: tighter chrome */
 @media (max-height: 500px) and (orientation: landscape) {
